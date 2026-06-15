@@ -8,7 +8,7 @@
 # TODO Update mce_hive_openapi_bug_fixed_version to the first MCE z-stream that ships
 # the upstream fix so the workaround is automatically skipped on patched clusters.
 mce_hive_openapi_bug_min_version: "2.11.0"
-mce_hive_openapi_bug_fixed_version: "99.99.99" //TODO UPDATE
+mce_hive_openapi_bug_fixed_version: "99.99.99"  # TODO: update to first MCE z-stream shipping the fix
 
 # Hive controllers that initialise a resource.Helper and therefore fatal on the
 # broken OpenAPI schema. Only these two are affected; all provisioning controllers
