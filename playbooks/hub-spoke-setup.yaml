@@ -1,0 +1,211 @@
+---
+# ==============================================================================
+# HUB: Provision ACM Hub (IPI)
+# ==============================================================================
+- name: Hub - Provision ACM Hub
+  hosts: hub_cluster
+  connection: local
+  gather_facts: false
+  tags: ['hub']
+  tasks:
+    - name: Ensure prerequisites are met
+      ansible.builtin.include_role:
+        name: ocp/install_ocp_prerequisites
+
+    - name: Request Elastic IP Quota Increase
+      ansible.builtin.include_role:
+        name: aws/aws_eip_quota
+
+    - name: Provision Hub via IPI
+      ansible.builtin.include_role:
+        name: ocp/aws_provision_ocp_ipi
+
+    - name: Set Hub Kubeconfig Path
+      ansible.builtin.set_fact:
+        hub_kubeconfig: "{{ install_dir }}/{{ ocp_cluster.name }}/auth/kubeconfig"
+
+    - name: Create Infrastructure Node Pool
+      block:
+        - ansible.builtin.include_role:
+            name: ocp/aws_create_machineset
+          vars:
+            target_kubeconfig: "{{ hub_kubeconfig }}"
+            pool_name: "infra"
+            pool_replicas: "{{ install_config.infra.replicas }}"
+            pool_instance_type: "{{ install_config.infra.instance_type }}"
+            pool_labels:
+              node-role.kubernetes.io/infra: ""
+            pool_taints:
+              - effect: NoSchedule
+                key: node-role.kubernetes.io/infra
+      when: install_config.infra is defined
+
+    - name: Create ODF Storage Node Pool
+      block:
+        - ansible.builtin.include_role:
+            name: ocp/aws_create_machineset
+          vars:
+            target_kubeconfig: "{{ hub_kubeconfig }}"
+            pool_name: "storage"
+            pool_replicas: "{{ install_config.storage.replicas }}"
+            pool_instance_type: "{{ install_config.storage.instance_type }}"
+            pool_labels:
+              cluster.ocs.openshift.io/openshift-storage: ""
+              node-role.kubernetes.io/worker: ""
+              node-role.kubernetes.io/storage: ""
+            pool_taints:
+              - effect: NoSchedule
+                key: node.ocs.openshift.io/storage
+                value: "true"
+      when: install_config.storage is defined
+
+    - name: Install Hub GitOps
+      ansible.builtin.include_role:
+        name: ocp/install_openshift_gitops
+      vars:
+        target_kubeconfig: "{{ hub_kubeconfig }}"
+
+    - name: Install Hub Day 2 Config
+      ansible.builtin.include_role:
+        name: "{{ item }}"
+      loop:
+        - argo/apps_install_acm
+        - argo/apps_install_odf
+        - argo/apps_install_mco
+      vars:
+        target_kubeconfig: "{{ hub_kubeconfig }}"
+
+    - name: Configure Search Add-on for Hub (local-cluster)
+      ansible.builtin.include_role:
+        name: acm/configure_search_addon
+      vars:
+        target_kubeconfig: "{{ hub_kubeconfig }}"
+        search_target_namespaces:
+          - "local-cluster"
+
+    - name: Wait For Argo Apps to Install
+      ansible.builtin.include_role:
+        name: ocp/waitfor_argo_apps
+      vars:
+        target_kubeconfig: "{{ hub_kubeconfig }}"
+
+    - name: Apply Hive OpenAPI Schema Workaround (MCE 2.11.x)
+      ansible.builtin.include_role:
+        name: acm/workaround_hive_openapi_schema
+      vars:
+        target_kubeconfig: "{{ hub_kubeconfig }}"
+
+    - name: Install ACM Policies
+      ansible.builtin.include_role:
+        name: "{{ item }}"
+      loop:
+        - acm/policy_install_openshift_gitops_1.18
+        - acm/policy_install_openshift_gitops_1.19
+      vars:
+        spokes_clusterset: "{{ ocp_cluster.spokes_clusterset }}"
+        target_kubeconfig: "{{ hub_kubeconfig }}"
+
+    - name: Deploy User Workload Monitoring Policy (optional)
+      ansible.builtin.include_role:
+        name: acm/policy_enable_uwm
+      vars:
+        spokes_clusterset: "{{ ocp_cluster.spokes_clusterset }}"
+        target_kubeconfig: "{{ hub_kubeconfig }}"
+      when: enable_uwm | default(false) | bool
+
+    - name: Configure Managed Cluster Addons
+      ansible.builtin.include_role:
+        name: acm/configure_managed_cluster_addons
+      vars:
+        target_kubeconfig: "{{ hub_kubeconfig }}"
+
+    - name: Fetch Hub kubeadmin password
+      ansible.builtin.slurp:
+        src: "{{ install_dir }}/{{ ocp_cluster.name }}/auth/kubeadmin-password"
+      register: hub_password_raw
+
+    - name: Print Hub Details
+      ansible.builtin.debug:
+        msg:
+          - "=================================================================="
+          - "Hub Cluster: {{ ocp_cluster.name }}"
+          - "Web Console: https://console-openshift-console.apps.{{ ocp_cluster.name }}.{{ base_domain }}/"
+          - "Username:    kubeadmin"
+          - "Password:    {{ hub_password_raw.content | b64decode }}"
+          - "=================================================================="
+
+# ==============================================================================
+# SPOKES: Provision Managed Clusters (via ACM/Hive on Hub)
+# ==============================================================================
+- name: Spokes - Provision Managed Clusters
+  hosts: managed_clusters
+  connection: local
+  gather_facts: false
+  tags: ['spokes']
+  tasks:
+    - name: Set Hub Kubeconfig
+      ansible.builtin.set_fact:
+        hub_kubeconfig: "{{ install_dir }}/{{ hostvars[groups['hub_cluster'][0]]['ocp_cluster']['name'] }}/auth/kubeconfig"
+
+    - name: Apply Hive Provisioning Manifests to Hub
+      ansible.builtin.include_role:
+        name: acm/aws_provision_cluster_via_acm
+      vars:
+        target_kubeconfig: "{{ hub_kubeconfig }}"
+        parent_clusterset: "{{ ocp_cluster.parent_clusterset }}"
+
+    - name: Extract Kubeconfig for Managed Cluster
+      ansible.builtin.include_role:
+        name: acm/admin_extract_spoke_credentials
+      vars:
+        target_kubeconfig: "{{ hub_kubeconfig }}"
+
+    - name: Configure Search Add-on for Managed Cluster on Hub
+      ansible.builtin.include_role:
+        name: acm/configure_search_addon
+      vars:
+        target_kubeconfig: "{{ hub_kubeconfig }}"
+        search_target_namespaces:
+          - "{{ ocp_cluster.name }}"
+
+# ==============================================================================
+# SUMMARY: Final Environment Handoff
+# ==============================================================================
+- name: Deployment Summary
+  hosts: hub_cluster
+  connection: local
+  gather_facts: false
+  tags: ['summary']
+  tasks:
+    - name: Build per-cluster connection info
+      ansible.builtin.set_fact:
+        _summary_lines: "{{ _summary_lines | default([]) + _entry }}"
+      vars:
+        _name: "{{ hostvars[item]['ocp_cluster']['name'] }}"
+        _role: >-
+          {%- if item in groups['hub_cluster'] -%}Hub
+          {%- else -%}Managed Cluster{%- endif -%}
+        _pwd: "{{ lookup('file', install_dir + '/' + _name + '/auth/kubeadmin-password') }}"
+        _entry:
+          - ""
+          - "{{ _role }}:  {{ _name }}"
+          - "  Console:    https://console-openshift-console.apps.{{ _name }}.{{ base_domain }}/"
+          - "  Username:   kubeadmin"
+          - "  Password:   {{ _pwd }}"
+          - "  Kubeconfig: {{ install_dir }}/{{ _name }}/auth/kubeconfig"
+      loop: >-
+        {{
+          groups['hub_cluster'] +
+          (groups['managed_clusters'] | default([]))
+        }}
+
+    - name: Print Full Deployment Summary
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            ['==================================================================',
+             'ACM Hub+Spoke Deployment Complete!',
+             '=================================================================='] +
+            _summary_lines +
+            ['', '==================================================================']
+          }}
