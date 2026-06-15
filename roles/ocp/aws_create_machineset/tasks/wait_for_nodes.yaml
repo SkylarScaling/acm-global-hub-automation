@@ -1,0 +1,34 @@
+---
+- name: Wait for {{ pool_name }} Machines to be created and Running
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ target_kubeconfig }}"
+    api_version: machine.openshift.io/v1beta1
+    kind: Machine
+    namespace: openshift-machine-api
+    label_selectors:
+      - "machine.openshift.io/cluster-api-machine-role={{ pool_name }}"
+  register: machine_creation_status
+  until: >
+    machine_creation_status.resources | length >= pool_replicas | int and
+    (machine_creation_status.resources | selectattr('status.phase', 'defined') | 
+     selectattr('status.phase', 'equalto', 'Running') | list | length) >= pool_replicas | int
+  retries: 360 # Check every 10 seconds for 60 minutes
+  delay: 10
+
+- name: Wait for {{ pool_name }} Nodes to join the cluster and be Ready
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ target_kubeconfig }}"
+    api_version: v1
+    kind: Node
+    label_selectors:
+      # OpenShift auto-propagates the machine-role to the node labels
+      - "node-role.kubernetes.io/{{ pool_name }}="
+  register: node_creation_status
+  until: >
+    node_creation_status.resources | length >= pool_replicas | int and
+    (node_creation_status.resources | selectattr('status.conditions', 'defined') | 
+     map(attribute='status.conditions') | flatten | 
+     selectattr('type', 'equalto', 'Ready') | 
+     selectattr('status', 'equalto', 'True') | list | length) >= pool_replicas | int
+  retries: 360
+  delay: 10

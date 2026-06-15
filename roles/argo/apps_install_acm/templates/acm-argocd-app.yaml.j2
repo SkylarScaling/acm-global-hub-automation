@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ acm_argocd_app_name }}
+  namespace: {{ acm_argocd_namespace }}
+spec:
+  project: {{ acm_argocd_project }}
+  source:
+    repoURL: {{ acm_git_repo_url }}
+    targetRevision: {{ acm_git_repo_revision }}
+    path: {{ acm_git_repo_path }}
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ acm_target_namespace }}
+  syncPolicy:
+{% if acm_argocd_sync_policy == "Automatic" %}
+    automated:
+      prune: true
+      selfHeal: true
+{% endif %}
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true

@@ -1,0 +1,40 @@
+---
+- name: Create Custom MachineSets (Infra & Storage)
+  hosts: localhost
+  vars_files:
+    - ../group_vars/all.yaml
+  connection: local
+  gather_facts: false
+  environment:
+    KUBECONFIG: "{{ install_dir }}/{{ ocp_cluster.name }}/auth/kubeconfig"
+
+  tasks:
+    - name: Create Infrastructure Node Pool
+      ansible.builtin.include_role:
+        name: ocp/aws_create_machineset
+      vars:
+        pool_name: "infra"
+        pool_replicas: "{{ install_config.infra.replicas }}"
+        pool_instance_type: "{{ install_config.infra.instance_type }}"
+        pool_labels:
+          node-role.kubernetes.io/infra: ""
+        pool_taints:
+          - effect: NoSchedule
+            key: node-role.kubernetes.io/infra
+
+    - name: Create ODF Storage Node Pool
+      ansible.builtin.include_role:
+        name: ocp/aws_create_machineset
+      vars:
+        pool_name: "storage"
+        pool_replicas: "{{ install_config.storage.replicas }}"
+        pool_instance_type: "{{ install_config.storage.instance_type }}"
+        pool_labels:
+          cluster.ocs.openshift.io/openshift-storage: ""
+          # Workers label required so standard OVN/Networking pods schedule here
+          node-role.kubernetes.io/worker: ""
+          node-role.kubernetes.io/storage: ""
+        pool_taints:
+          - effect: NoSchedule
+            key: node.ocs.openshift.io/storage
+            value: "true"

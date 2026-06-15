@@ -1,0 +1,373 @@
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: k8s-resource-dashboard
+  namespace: open-cluster-management-observability
+  labels:
+    grafana-custom-dashboard: "true"
+  annotations:
+    observability.open-cluster-management.io/dashboard-folder: Custom
+data:
+  k8s-dashboard.json: |-
+    {% raw %}
+    {
+      "__inputs": [
+        {
+          "name": "DS__VICTORIAMETRICS-PROD-ALL",
+          "label": "VictoriaMetrics-prod-all",
+          "description": "",
+          "type": "datasource",
+          "pluginId": "prometheus",
+          "pluginName": "Prometheus"
+        }
+      ],
+      "__elements": {},
+      "__requires": [
+        {
+          "type": "panel",
+          "id": "bargauge",
+          "name": "Bar gauge",
+          "version": ""
+        },
+        {
+          "type": "grafana",
+          "id": "grafana",
+          "name": "Grafana",
+          "version": "10.4.1"
+        },
+        {
+          "type": "datasource",
+          "id": "prometheus",
+          "name": "Prometheus",
+          "version": "1.0.0"
+        },
+        {
+          "type": "panel",
+          "id": "stat",
+          "name": "Stat",
+          "version": ""
+        },
+        {
+          "type": "panel",
+          "id": "table",
+          "name": "Table",
+          "version": ""
+        },
+        {
+          "type": "panel",
+          "id": "timeseries",
+          "name": "Time series",
+          "version": ""
+        }
+      ],
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": {
+              "type": "datasource",
+              "uid": "grafana"
+            },
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "description": "Comprehensive display of resources! Adapted for ACM Thanos.",
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 0,
+      "links": [],
+      "liveNow": false,
+      "panels": [
+        {
+          "collapsed": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          },
+          "id": 54,
+          "panels": [],
+          "title": "Node Resource Overview：Selected Nodes:【$Node】",
+          "type": "row"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 1,
+              "max": 1,
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "orange", "value": 0.8 },
+                  { "color": "red", "value": 0.9 }
+                ]
+              },
+              "unit": "percentunit"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+          "id": 44,
+          "options": {
+            "displayMode": "basic",
+            "orientation": "vertical",
+            "reduceOptions": { "calcs": ["last"], "values": false }
+          },
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "$datasource" },
+              "expr": "sum(container_memory_working_set_bytes{cluster=~\"$cluster\",container!=\"\",node=~\"^$Node$\"}) / sum(kube_node_status_allocatable{cluster=~\"$cluster\",resource=\"memory\", unit=\"byte\", node=~\"^$Node$\"})",
+              "format": "time_series",
+              "instant": true,
+              "legendFormat": "Memory Utilization",
+              "refId": "C"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "$datasource" },
+              "expr": "sum(kube_pod_container_resource_requests{cluster=~\"$cluster\",resource=\"memory\", unit=\"byte\",node=~\"^$Node$\"}) / sum(kube_node_status_allocatable{cluster=~\"$cluster\",resource=\"memory\", unit=\"byte\", node=~\"^$Node$\"})",
+              "format": "time_series",
+              "instant": true,
+              "legendFormat": "Memory Request Rate",
+              "refId": "A"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "$datasource" },
+              "expr": "sum(kube_pod_container_resource_limits{cluster=~\"$cluster\",resource=\"memory\", unit=\"byte\",node=~\"^$Node$\"}) / sum(kube_node_status_allocatable{cluster=~\"$cluster\",resource=\"memory\", unit=\"byte\", node=~\"^$Node$\"})",
+              "format": "time_series",
+              "instant": true,
+              "legendFormat": "Memory Limit Rate",
+              "refId": "B"
+            }
+          ],
+          "title": "Node Memory Ratio",
+          "type": "bargauge"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 1,
+              "max": 1,
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "orange", "value": 0.7 },
+                  { "color": "red", "value": 0.9 }
+                ]
+              },
+              "unit": "percentunit"
+            }
+          },
+          "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+          "id": 45,
+          "options": {
+            "displayMode": "basic",
+            "orientation": "vertical",
+            "reduceOptions": { "calcs": ["last"], "values": false }
+          },
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "$datasource" },
+              "expr": "sum (irate(container_cpu_usage_seconds_total{cluster=~\"$cluster\",container!=\"\",node=~\"^$Node$\"}[2m])) / sum(kube_node_status_allocatable{cluster=~\"$cluster\",resource=\"cpu\", unit=\"core\", node=~\"^$Node$\"})",
+              "format": "time_series",
+              "instant": true,
+              "legendFormat": "CPU Utilization Rate",
+              "refId": "C"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "$datasource" },
+              "expr": "sum(kube_pod_container_resource_requests{cluster=~\"$cluster\",resource=\"cpu\", unit=\"core\",node=~\"^$Node$\"}) / sum(kube_node_status_allocatable{cluster=~\"$cluster\",resource=\"cpu\", unit=\"core\", node=~\"^$Node$\"})",
+              "format": "time_series",
+              "instant": true,
+              "legendFormat": "CPU Request Rate",
+              "refId": "A"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "$datasource" },
+              "expr": "sum(kube_pod_container_resource_limits{cluster=~\"$cluster\",resource=\"cpu\", unit=\"core\",node=~\"^$Node$\"}) / sum(kube_node_status_allocatable{cluster=~\"$cluster\",resource=\"cpu\", unit=\"core\", node=~\"^$Node$\"})",
+              "format": "time_series",
+              "instant": true,
+              "legendFormat": "CPU Limit Rate",
+              "refId": "B"
+            }
+          ],
+          "title": "Node CPU Ratio",
+          "type": "bargauge"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "fieldConfig": {
+            "defaults": {
+              "max": 100,
+              "min": 1,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "orange", "value": 1000 },
+                  { "color": "red", "value": 2000 }
+                ]
+              },
+              "unit": "none"
+            }
+          },
+          "gridPos": { "h": 4, "w": 3, "x": 8, "y": 1 },
+          "id": 74,
+          "options": {
+            "displayMode": "basic",
+            "orientation": "vertical",
+            "reduceOptions": { "calcs": ["last"], "values": false }
+          },
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "$datasource" },
+              "expr": "count(kube_node_info{cluster=~\"$cluster\"})",
+              "instant": true,
+              "legendFormat": "Number of nodes",
+              "refId": "A"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "$datasource" },
+              "expr": "count(kube_pod_info{cluster=~\"$cluster\",created_by_kind!~\"<none>|Job\",node=~\"^$Node$\"})",
+              "instant": true,
+              "legendFormat": "Pod Number of nodes",
+              "refId": "B"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "$datasource" },
+              "expr": "sum(kube_node_status_allocatable{cluster=~\"$cluster\",resource=\"pods\", unit=\"integer\",node=~\"^$Node$\"})",
+              "instant": true,
+              "legendFormat": "Upper limit Pod",
+              "refId": "C"
+            }
+          ],
+          "title": "Nodes with Pod",
+          "type": "bargauge"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "gridPos": { "h": 8, "w": 5, "x": 11, "y": 1 },
+          "id": 51,
+          "options": {
+            "cellHeight": "sm",
+            "showHeader": true,
+            "sortBy": [{ "desc": true, "displayName": "Microservices" }]
+          },
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "$datasource" },
+              "expr": "count(kube_pod_info{cluster=~\"$cluster\",node=~\"^$Node$\"}) by (namespace)",
+              "format": "table",
+              "instant": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Namespace Resource Statistics",
+          "type": "table"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
+          "id": 32,
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "$datasource" },
+              "expr": "sum (irate(container_network_receive_bytes_total{cluster=~\"$cluster\",node=~\"^$Node$\",namespace=~\"$NameSpace\"}[2m]))*8",
+              "format": "time_series",
+              "legendFormat": "Receive",
+              "refId": "A"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "$datasource" },
+              "expr": "sum (irate(container_network_transmit_bytes_total{cluster=~\"$cluster\",node=~\"^$Node$\",namespace=~\"$NameSpace\"}[2m]))*8",
+              "legendFormat": "Send",
+              "refId": "B"
+            }
+          ],
+          "title": "Network Overview",
+          "type": "timeseries"
+        }
+      ],
+      "refresh": "",
+      "schemaVersion": 39,
+      "tags": ["Kubernetes", "Nodes"],
+      "templating": {
+        "list": [
+          {
+            "current": { "selected": false, "text": "Prometheus", "value": "Prometheus" },
+            "hide": 0,
+            "name": "datasource",
+            "query": "prometheus",
+            "type": "datasource"
+          },
+          {
+            "allValue": "",
+            "datasource": { "type": "prometheus", "uid": "$datasource" },
+            "definition": "label_values(kube_node_info,cluster)",
+            "includeAll": true,
+            "name": "cluster",
+            "query": "label_values(kube_node_info,cluster)",
+            "type": "query"
+          },
+          {
+            "allValue": ".*",
+            "datasource": { "type": "prometheus", "uid": "$datasource" },
+            "definition": "label_values(kube_node_info{cluster=~\"$cluster\"},node)",
+            "includeAll": true,
+            "name": "Node",
+            "query": "label_values(kube_node_info{cluster=~\"$cluster\"},node)",
+            "type": "query"
+          },
+          {
+            "allValue": ".*",
+            "datasource": { "type": "prometheus", "uid": "$datasource" },
+            "definition": "label_values(kube_namespace_created{cluster=~\"$cluster\"},namespace)",
+            "includeAll": true,
+            "name": "NameSpace",
+            "query": "label_values(kube_namespace_created{cluster=~\"$cluster\"},namespace)",
+            "type": "query"
+          },
+          {
+            "allValue": ".*",
+            "datasource": { "type": "prometheus", "uid": "$datasource" },
+            "definition": "label_values(kube_pod_container_info{cluster=~\"$cluster\",namespace=~\"$NameSpace\"},container)",
+            "includeAll": true,
+            "name": "Container",
+            "query": "label_values(kube_pod_container_info{cluster=~\"$cluster\",namespace=~\"$NameSpace\"},container)",
+            "type": "query"
+          },
+          {
+            "allValue": ".*",
+            "datasource": { "type": "prometheus", "uid": "$datasource" },
+            "definition": "label_values(kube_pod_container_info{cluster=~\"$cluster\",namespace=~\"$NameSpace\",container=~\"$Container\"},pod)",
+            "includeAll": true,
+            "name": "Pod",
+            "query": "label_values(kube_pod_container_info{cluster=~\"$cluster\",namespace=~\"$NameSpace\",container=~\"$Container\"},pod)",
+            "type": "query"
+          }
+        ]
+      },
+      "time": { "from": "now-30m", "to": "now" },
+      "timezone": "browser",
+      "title": "K8S Dashboard",
+      "version": 8
+    }
+    {% endraw %}

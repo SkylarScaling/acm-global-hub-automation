@@ -1,0 +1,166 @@
+---
+# DYNAMICALLY DISCOVER CLUSTER IMAGE SET
+- name: Query Hub for available ClusterImageSets
+  kubernetes.core.k8s_info:
+    api_version: hive.openshift.io/v1
+    kind: ClusterImageSet
+    kubeconfig: "{{ target_kubeconfig }}"
+  register: available_image_sets
+
+- name: Dynamically set the ClusterImageSet fact based on inventory version
+  ansible.builtin.set_fact:
+    spoke_clusterimageset_name: >-
+      {{
+        available_image_sets.resources |
+        selectattr('metadata.name', 'search', openshift_version ~ '.' ~ ocp_patch_version) |
+        map(attribute='metadata.name') |
+        first | default('')
+      }}
+
+- name: Verify that a matching ClusterImageSet was found
+  ansible.builtin.assert:
+    that:
+      - spoke_clusterimageset_name != ""
+    fail_msg: >
+      Could not find a ClusterImageSet on the Hub matching version {{ openshift_version }}.{{ ocp_patch_version }}. 
+      Ensure ACM has synced the latest release images.
+
+- name: Ensure target ManagedClusterSet exists on the Hub
+  kubernetes.core.k8s:
+    kubeconfig: "{{ target_kubeconfig }}"
+    state: present
+    template: "00-managed-clusterset.yaml.j2"
+
+# CREATE MANAGED CLUSTER FIRST so ACM doesn't delete the namespace immediately
+- name: Create ManagedCluster object
+  kubernetes.core.k8s:
+    kubeconfig: "{{ target_kubeconfig }}"
+    state: present
+    template: "01-managed-cluster.yaml.j2"
+
+- name: Create Spoke Cluster Namespace
+  kubernetes.core.k8s:
+    kubeconfig: "{{ target_kubeconfig }}"
+    state: present
+    template: "02-namespace.yaml.j2"
+
+- name: Create Required Secrets (AWS Creds, Pull Secret, Install-Config)
+  kubernetes.core.k8s:
+    kubeconfig: "{{ target_kubeconfig }}"
+    state: present
+    template: "03-secrets.yaml.j2"
+
+- name: Create ClusterDeployment object
+  kubernetes.core.k8s:
+    kubeconfig: "{{ target_kubeconfig }}"
+    state: present
+    template: "04-cluster-deployment.yaml.j2"
+
+- name: Create MachinePool object for Worker Nodes
+  kubernetes.core.k8s:
+    kubeconfig: "{{ target_kubeconfig }}"
+    state: present
+    template: "05-machine-pool.yaml.j2"
+
+- name: Wait for ClusterDeployment to start provisioning
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ target_kubeconfig }}"
+    api_version: hive.openshift.io/v1
+    kind: ClusterDeployment
+    name: "{{ ocp_cluster.name }}"
+    namespace: "{{ ocp_cluster.name }}"
+  register: cd_status
+  until:
+    - cd_status.resources | length > 0
+    - cd_status.resources[0].status.provisionRef is defined
+  retries: 30
+  delay: 10
+
+- name: Wait for OpenShift cluster installation to complete or fail (Takes 35-45+ minutes)
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ target_kubeconfig }}"
+    api_version: hive.openshift.io/v1
+    kind: ClusterDeployment
+    name: "{{ ocp_cluster.name }}"
+    namespace: "{{ ocp_cluster.name }}"
+  register: cd_status
+  until: >
+    (cd_status.resources | length > 0 and cd_status.resources[0].status is defined) and
+    (
+      (cd_status.resources[0].status.conditions | default([]) | selectattr('type', 'equalto', 'Provisioned') | selectattr('status', 'equalto', 'True') | list | length > 0) or
+      (cd_status.resources[0].status.conditions | default([]) | selectattr('type', 'equalto', 'ProvisionFailed') | selectattr('status', 'equalto', 'True') | list | length > 0)
+    )
+  retries: 90       # 90 retries * 60 seconds = up to 90 minutes of waiting
+  delay: 60
+
+- name: Fail immediately if provisioning errored out
+  ansible.builtin.fail:
+    msg: >
+      ❌ Provisioning for {{ ocp_cluster.name }} failed!
+      Reason: {{ (cd_status.resources[0].status.conditions | selectattr('type', 'equalto', 'ProvisionFailed') | first).reason | default('Unknown') }}
+      Message: {{ (cd_status.resources[0].status.conditions | selectattr('type', 'equalto', 'ProvisionFailed') | first).message | default('No details provided by Hive.') }}
+  when:
+    - cd_status.resources[0].status.conditions is defined
+    - cd_status.resources[0].status.conditions | selectattr('type', 'equalto', 'ProvisionFailed') | selectattr('status', 'equalto', 'True') | list | length > 0
+
+- name: Ensure Observability Namespace exists on the Spoke via ManifestWork
+  kubernetes.core.k8s:
+    # Target the Hub
+    kubeconfig: "{{ target_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: work.open-cluster-management.io/v1
+      kind: ManifestWork
+      metadata:
+        # Give the mailbox payload a unique name
+        name: "{{ ocp_cluster.name }}-observability-namespace"
+        # The namespace must be the Spoke's cluster name on the Hub
+        namespace: "{{ ocp_cluster.name }}"
+      spec:
+        workload:
+          manifests:
+            # Tell the Hub to mail this Namespace creation instruction to the Spoke
+            - apiVersion: v1
+              kind: Namespace
+              metadata:
+                name: open-cluster-management-observability
+
+- name: Report successful provisioning
+  ansible.builtin.debug:
+    msg: "✅ Cluster {{ ocp_cluster.name }} has been successfully provisioned by ACM!"
+
+# ==============================================================================
+# HOSTED MODE CONFIGURATION (Only runs for Tier 2 Regional Hubs)
+# ==============================================================================
+- name: Extract Hive Admin Kubeconfig for Hosted Import
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ target_kubeconfig }}"
+    api_version: v1
+    kind: Secret
+    namespace: "{{ ocp_cluster.name }}"
+    label_selectors:
+      - "hive.openshift.io/cluster-deployment-name={{ ocp_cluster.name }}"
+      - "hive.openshift.io/secret-type=kubeconfig"
+  register: hive_kubeconfig_secret
+  when: is_regional_hub | default(false) | bool
+  until:
+    - hive_kubeconfig_secret.resources is defined
+    - hive_kubeconfig_secret.resources | length > 0
+  retries: 30
+  delay: 10
+
+- name: Create auto-import-secret for Hosted Mode
+  kubernetes.core.k8s:
+    kubeconfig: "{{ target_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: auto-import-secret
+        namespace: "{{ ocp_cluster.name }}"
+      type: Opaque
+      data:
+        # We pass the raw base64 data directly from the Hive secret
+        kubeconfig: "{{ hive_kubeconfig_secret.resources[0].data.kubeconfig }}"
+  when: is_regional_hub | default(false) | bool

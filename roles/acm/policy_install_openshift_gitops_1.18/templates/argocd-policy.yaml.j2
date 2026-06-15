@@ -1,0 +1,152 @@
+---
+# Namespace Permission: Allows this Hub namespace to see the Spoke clusters
+apiVersion: cluster.open-cluster-management.io/v1beta2
+kind: ManagedClusterSetBinding
+metadata:
+  name: "{{ spokes_clusterset }}"
+  namespace: default
+spec:
+  clusterSet: "{{ spokes_clusterset }}"
+
+---
+# Placement (Set this up first, so the label selector goes into effect before the Subscription)
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: "openshift-gitops-placement-{{ gitops_version }}"
+  namespace: default
+spec:
+  clusterSets:
+    - "{{ spokes_clusterset }}"
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchLabels:
+            argocd.version: "{{ gitops_version }}"
+
+---
+# Policy: Install the GitOps Operator (Enforce)
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: "enforce-openshift-gitops-{{ gitops_version }}"
+  namespace: default
+  annotations:
+    policy.open-cluster-management.io/standards: Configuration Baseline
+    policy.open-cluster-management.io/categories: CM Configuration Management
+spec:
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: "install-openshift-gitops-operator-{{ gitops_version }}"
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: "{{ gitops_operator_namespace }}"
+
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: operators.coreos.com/v1
+                kind: OperatorGroup
+                metadata:
+                  name: openshift-gitops-operator
+                  namespace: "{{ gitops_operator_namespace }}"
+
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: operators.coreos.com/v1alpha1
+                kind: Subscription
+                metadata:
+                  name: openshift-gitops-operator
+                  namespace: "{{ gitops_operator_namespace }}"
+                spec:
+                  channel: "{{ gitops_operator_channel }}"
+                  installPlanApproval: Automatic
+                  name: openshift-gitops-operator
+                  source: "{{ gitops_operator_source }}"
+                  sourceNamespace: "{{ gitops_operator_source_namespace }}"
+
+---
+# Policy: Monitor Argo CD Health (Inform)
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: "monitor-openshift-gitops-health-{{ gitops_version }}"
+  namespace: default
+  annotations:
+    policy.open-cluster-management.io/standards: Configuration Baseline
+    policy.open-cluster-management.io/categories: CM Configuration Management
+spec:
+  remediationAction: inform
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: "check-argocd-cr-status-{{ gitops_version }}"
+        spec:
+          remediationAction: inform
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: argoproj.io/v1alpha1
+                kind: ArgoCD
+                metadata:
+                  name: openshift-gitops
+                  namespace: openshift-gitops
+                status:
+                  phase: Available
+
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: operators.coreos.com/v1alpha1
+                kind: Subscription
+                metadata:
+                  name: openshift-gitops-operator
+                  namespace: "{{ gitops_operator_namespace }}"
+                spec:
+                  channel: "{{ gitops_operator_channel }}"
+                status:
+                  # Verifies OLM has successfully installed the latest patch for this channel
+                  state: AtLatestKnown
+
+---
+# PolicySet
+apiVersion: policy.open-cluster-management.io/v1beta1
+kind: PolicySet
+metadata:
+  name: "openshift-gitops-{{ gitops_version }}-status"
+  namespace: default
+spec:
+  description: "Deploys and monitors OpenShift GitOps on managed clusters"
+  policies:
+    - "enforce-openshift-gitops-{{ gitops_version }}"
+    - "monitor-openshift-gitops-health-{{ gitops_version }}"
+
+---
+# PlacementBinding
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: "openshift-gitops-binding-{{ gitops_version }}"
+  namespace: default
+placementRef:
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+  name: "openshift-gitops-placement-{{ gitops_version }}"
+subjects:
+  - apiGroup: policy.open-cluster-management.io
+    kind: PolicySet
+    name: "openshift-gitops-{{ gitops_version }}-status"

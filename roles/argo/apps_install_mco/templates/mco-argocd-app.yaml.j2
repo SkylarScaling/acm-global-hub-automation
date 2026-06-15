@@ -1,0 +1,37 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ mco_argocd_app_name }}
+  namespace: {{ mco_argocd_namespace }}
+spec:
+  project: {{ mco_argocd_project }}
+  source:
+    repoURL: {{ mco_git_repo_url }}
+    targetRevision: {{ mco_git_repo_revision }}
+    path: {{ mco_git_repo_path }}
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ mco_target_namespace }}
+  syncPolicy:
+{% if mco_argocd_sync_policy == "Automatic" %}
+    automated:
+      prune: true
+      selfHeal: true
+{% endif %}
+    syncOptions:
+      - CreateNamespace=true
+      - SkipDryRunOnMissingResource=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 3m
+  ignoreDifferences:
+    - group: observability.open-cluster-management.io
+      kind: MultiClusterObservability
+      jsonPointers:
+        - /spec/advanced

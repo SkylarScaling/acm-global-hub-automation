@@ -1,0 +1,123 @@
+---
+# ==============================================================================
+# Phase 1: Local AWS CLI Setup
+# ==============================================================================
+- name: Ensure the destination binary directory exists
+  ansible.builtin.file:
+    path: "{{ bin_dir }}"
+    state: directory
+    mode: '0755'
+
+- name: Check if local AWS CLI is already installed
+  ansible.builtin.command: "{{ bin_dir }}/aws --version"
+  register: local_aws_cli_check
+  changed_when: false
+  ignore_errors: true
+
+- name: Local AWS CLI Installation Block
+  when: local_aws_cli_check.rc != 0
+  block:
+    - name: Download AWS CLI v2 zip
+      ansible.builtin.get_url:
+        url: "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
+        dest: "/tmp/awscliv2-local.zip"
+        mode: '0644'
+
+    - name: Extract AWS CLI v2 payload
+      ansible.builtin.unarchive:
+        src: "/tmp/awscliv2-local.zip"
+        dest: "/tmp"
+        remote_src: true
+
+    - name: Configure AWS CLI to local bin_dir (No sudo required)
+      ansible.builtin.command: >
+        /tmp/aws/install 
+        -i {{ bin_dir }}/aws-cli-lib 
+        -b {{ bin_dir }} 
+        --update
+
+    - name: Clean up temporary AWS CLI installation files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/tmp/awscliv2-local.zip"
+        - "/tmp/aws"
+
+- name: Ensure bin_dir is prioritized in the user's PATH via .bashrc
+  ansible.builtin.lineinfile:
+    path: "~/.bashrc"
+    regexp: '^export PATH=.*{{ bin_dir | regex_escape() }}.*'
+    line: 'export PATH="{{ bin_dir }}:$PATH"'
+    insertafter: EOF
+    create: yes
+    mode: '0644'
+
+- name: Verify installed local AWS CLI version
+  ansible.builtin.command: "{{ bin_dir }}/aws --version"
+  register: aws_version_output
+  changed_when: false
+  failed_when: aws_version_output.rc != 0
+
+# ==============================================================================
+# Phase 2: AWS Quota Management
+# ==============================================================================
+- name: AWS Quota Management Block
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ aws.aws_access_key_id }}"
+    AWS_SECRET_ACCESS_KEY: "{{ aws.aws_secret_access_key }}"
+    # AWS_SESSION_TOKEN: "{{ aws_session_token | default('') }}" # Uncomment if using STS
+  block:
+    - name: Get current EC2-VPC Elastic IPs quota
+      ansible.builtin.command: >
+        {{ bin_dir }}/aws service-quotas get-service-quota
+        --service-code ec2
+        --quota-code L-0263D0A3
+        --region {{ aws_region }}
+        --query 'Quota.Value'
+        --output text
+      register: current_eip_quota
+      changed_when: false
+
+    - name: Request EC2-VPC Elastic IPs quota increase
+      ansible.builtin.command: >
+        {{ bin_dir }}/aws service-quotas request-service-quota-increase
+        --service-code ec2
+        --quota-code L-0263D0A3
+        --desired-value {{ desired_eip_quota }}
+        --region {{ aws_region }}
+      when: (current_eip_quota.stdout | float) < (desired_eip_quota | float)
+      register: quota_increase_request
+      changed_when: true
+      failed_when:
+        - quota_increase_request.rc != 0
+        - "'ResourceAlreadyExistsException' not in quota_increase_request.stderr"
+
+    - name: Wait for Elastic IP quota to reach desired value (Times out after 60 mins)
+      ansible.builtin.command: >
+        {{ bin_dir }}/aws service-quotas get-service-quota
+        --service-code ec2
+        --quota-code L-0263D0A3
+        --region {{ aws_region }}
+        --query 'Quota.Value'
+        --output text
+      register: verify_eip_quota
+      until: (verify_eip_quota.stdout | float) >= (desired_eip_quota | float)
+      delay: 60
+      retries: 60
+      changed_when: false
+      when: quota_increase_request.changed
+      ignore_errors: true
+
+    - name: Check if the wait task timed out
+      ansible.builtin.fail:
+        msg: "The quota increase requires manual review by AWS Support. Please check your AWS Support Center console. Pausing cluster provisioning."
+      when:
+        - quota_increase_request.changed
+        - verify_eip_quota.failed is defined and verify_eip_quota.failed
+
+    - name: Report status
+      ansible.builtin.debug:
+        msg: >
+          {{ 'Success: Quota increased to ' ~ desired_eip_quota ~ ' in ' ~ aws_region if quota_increase_request.changed 
+             else 'No action needed: Quota (' ~ current_eip_quota.stdout ~ ') is sufficient.' }}

@@ -1,0 +1,21 @@
+---
+- name: Wait for the Global Hub (MultiClusterHub) to be fully Running
+  ansible.builtin.shell: >
+    {{ bin_dir }}/oc get multiclusterhub multiclusterhub
+    -n open-cluster-management
+    --kubeconfig {{ target_kubeconfig }}
+    -o jsonpath='{.status.phase}' 2>/dev/null || true
+  register: mch_status
+  until: mch_status.stdout == "Running"
+  retries: 180  # Wait up to 30 minutes for the Hub to fully initialize
+  delay: 10
+  changed_when: false
+
+- name: Configure Regional Hub Add-on Strategies (On Global Hub)
+  kubernetes.core.k8s:
+    kubeconfig: "{{ target_kubeconfig }}"
+    state: present
+    template: "regional-hubs-strategy.yaml.j2"
+  loop:
+    - governance-policy-framework
+    - config-policy-controller

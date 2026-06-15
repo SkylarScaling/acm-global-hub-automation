@@ -1,0 +1,6 @@
+---
+- name: Create the OpenShift GitOps Application for COO
+  kubernetes.core.k8s:
+    kubeconfig: "{{ target_kubeconfig }}"
+    state: present
+    template: coo-argocd-app.yaml.j2

@@ -1,0 +1,36 @@
+---
+- name: Wait for ManagedClusterAddOn CRD to be registered by the Hub Operator
+  ansible.builtin.shell: >
+    {{ bin_dir }}/oc get crd managedclusteraddons.addon.open-cluster-management.io
+    --kubeconfig {{ target_kubeconfig }}
+    -o jsonpath='{.metadata.name}' 2>/dev/null || true
+  register: crd_check
+  until: crd_check.stdout != ""
+  retries: 180
+  delay: 10
+  changed_when: false
+
+- name: Wait for target cluster namespaces to exist
+  ansible.builtin.shell: >
+    {{ bin_dir }}/oc get namespace {{ item }}
+    --kubeconfig {{ target_kubeconfig }}
+    -o jsonpath='{.metadata.name}' 2>/dev/null || true
+  register: ns_check
+  until: ns_check.stdout != ""
+  retries: 60  # Wait up to 10 minutes for the namespace to be scaffolded/provisioned
+  delay: 10
+  changed_when: false
+  loop: "{{ search_target_namespaces }}"
+
+- name: Enable Search Collector in target cluster namespaces
+  kubernetes.core.k8s:
+    kubeconfig: "{{ target_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: addon.open-cluster-management.io/v1alpha1
+      kind: ManagedClusterAddOn
+      metadata:
+        name: search-collector
+        namespace: "{{ item }}"
+      spec: {}
+  loop: "{{ search_target_namespaces }}"

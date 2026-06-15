@@ -1,0 +1,82 @@
+---
+- name: Validate OpenShift version variables
+  ansible.builtin.assert:
+    that:
+      - openshift_version is match('^[0-9]+\.[0-9]+$')
+      - ocp_patch_version is match('^[0-9]+$')
+    fail_msg: >
+      Ensure openshift_version is in 'X.Y' format (e.g., '4.20') 
+      and ocp_patch_version is strictly numeric (e.g., '13').
+    success_msg: "OpenShift version formats are valid. Proceeding with installation."
+
+- name: Ensure the destination binary directory exists
+  ansible.builtin.file:
+    path: "{{ bin_dir }}"
+    state: directory
+    mode: '0755'
+
+- name: Check installed oc version
+  ansible.builtin.command: "{{ bin_dir }}/oc version --client"
+  register: oc_version_check
+  changed_when: false
+  failed_when: false
+
+- name: Check installed openshift-install version
+  ansible.builtin.command: "{{ bin_dir }}/openshift-install version"
+  register: installer_version_check
+  changed_when: false
+  failed_when: false
+
+- name: Download and extract OpenShift Client (oc and kubectl)
+  ansible.builtin.unarchive:
+    src: "{{ openshift_mirror_url }}/openshift-client-linux.tar.gz"
+    dest: "{{ bin_dir }}"
+    remote_src: yes
+    mode: '0755'
+    exclude:
+      - "README.md"
+  when: >
+    force_update | bool or
+    oc_version_check.rc != 0 or
+    (openshift_version ~ '.' ~ ocp_patch_version) not in oc_version_check.stdout
+
+- name: Download and extract OpenShift Installer
+  ansible.builtin.unarchive:
+    src: "{{ openshift_mirror_url }}/openshift-install-linux.tar.gz"
+    dest: "{{ bin_dir }}"
+    remote_src: yes
+    mode: '0755'
+    exclude:
+      - "README.md"
+  when: >
+    force_update | bool or
+    installer_version_check.rc != 0 or
+    (openshift_version ~ '.' ~ ocp_patch_version) not in installer_version_check.stdout
+
+- name: Ensure bin_dir is prioritized in the user's PATH via .bashrc
+  ansible.builtin.lineinfile:
+    path: "~/.bashrc"
+    regexp: '^export PATH=.*{{ bin_dir | regex_escape() }}.*'
+    line: 'export PATH="{{ bin_dir }}:$PATH"'
+    insertafter: EOF
+    create: yes
+    mode: '0644'
+
+- name: Verify installed OpenShift Client version
+  ansible.builtin.command: "{{ bin_dir }}/oc version --client"
+  register: oc_version_output
+  changed_when: false
+
+- name: Display OpenShift Client version
+  ansible.builtin.debug:
+    msg: "{{ oc_version_output.stdout_lines }}"
+
+- name: Enable bash auto-completion for oc client
+  ansible.builtin.lineinfile:
+    path: "~/.bashrc"
+    regexp: 'oc completion bash'
+    line: 'source <({{ bin_dir }}/oc completion bash)'
+    insertafter: EOF
+    create: yes
+    mode: '0644'
+...

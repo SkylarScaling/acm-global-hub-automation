@@ -1,0 +1,9 @@
+- name: Install ArgoCD to Cluster via OpenShift GitOps Operator
+  hosts: localhost
+  vars_files:
+    - ../group_vars/all.yaml
+  gather_facts: false
+  environment:
+    KUBECONFIG: "{{ install_dir }}/{{ ocp_cluster.name }}/auth/kubeconfig"
+  roles:
+    - ocp/install_openshift_gitops

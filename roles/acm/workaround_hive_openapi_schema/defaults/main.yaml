@@ -1,0 +1,18 @@
+---
+# MCE version range affected by the broken UserPermission OpenAPI schema bug.
+# See: ISSUES.md #10
+#
+# Root cause: stolostron/cluster-lifecycle-api@5d78c3f (2025-11-20)
+# Upstream fix: stolostron/cluster-lifecycle-api@4c06e6b (2026-03-24)
+#
+# TODO Update mce_hive_openapi_bug_fixed_version to the first MCE z-stream that ships
+# the upstream fix so the workaround is automatically skipped on patched clusters.
+mce_hive_openapi_bug_min_version: "2.11.0"
+mce_hive_openapi_bug_fixed_version: "99.99.99" //TODO UPDATE
+
+# Hive controllers that initialise a resource.Helper and therefore fatal on the
+# broken OpenAPI schema. Only these two are affected; all provisioning controllers
+# (clusterDeployment, clusterProvision, clusterDeprovision, dnszone) are clean.
+mce_hive_openapi_disabled_controllers:
+  - "remoteingress"
+  - "controlPlaneCerts"

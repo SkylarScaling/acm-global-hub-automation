@@ -1,0 +1,116 @@
+---
+- name: Check if cluster directory already exists
+  ansible.builtin.stat:
+    path: "{{ install_dir }}/{{ ocp_cluster.name }}"
+  register: cluster_dir_stat
+
+- name: Check if auth directory exists
+  ansible.builtin.stat:
+    path: "{{ install_dir }}/{{ ocp_cluster.name }}/auth"
+  register: auth_dir_stat
+
+- name: Check if kubeadmin password exists
+  ansible.builtin.stat:
+    path: "{{ install_dir }}/{{ ocp_cluster.name }}/auth/kubeadmin-password"
+  register: kubeadmin_pwd_stat
+
+- name: Skip provisioning if cluster exists
+  ansible.builtin.debug:
+    msg: "Cluster directory already exists, skipping provisioning..."
+  when: >
+    cluster_dir_stat.stat.exists and
+    auth_dir_stat.stat.exists and
+    kubeadmin_pwd_stat.stat.exists
+
+# A previous Ansible run may have left openshift-install running as an orphaned background
+# process. Kill it and remove the partial directory so we start completely clean.
+- name: Kill any orphaned openshift-install process for this cluster
+  ansible.builtin.shell: >
+    pkill -f "openshift-install.*{{ ocp_cluster.name }}" 2>/dev/null || true
+  changed_when: false
+  when: >
+    cluster_dir_stat.stat.exists and
+    not kubeadmin_pwd_stat.stat.exists
+
+- name: Remove partial install directory to ensure clean start
+  ansible.builtin.file:
+    path: "{{ install_dir }}/{{ ocp_cluster.name }}"
+    state: absent
+  when: >
+    cluster_dir_stat.stat.exists and
+    not kubeadmin_pwd_stat.stat.exists
+
+- name: Provision Cluster on AWS
+  block:
+    - name: create install_dir to work in
+      ansible.builtin.file:
+        state: directory
+        path: "{{ install_dir }}/{{ ocp_cluster.name }}"
+      register: install_path
+
+    - name: print install_dir location for admin
+      ansible.builtin.debug:
+        msg: "The working directory location is {{ install_path.path }}"
+
+    - name: Create .aws directory
+      ansible.builtin.file:
+        path: "~/.aws"
+        state: directory
+        mode: "0755"
+
+    - name: Configure AWS credentials for the default profile
+      ansible.builtin.ini_file:
+        path: "~/.aws/credentials"
+        section: "default"
+        option: "{{ item.option }}"
+        value: "{{ item.value }}"
+        mode: '0600'
+      loop:
+        - { option: 'aws_access_key_id', value: '{{ aws.aws_access_key_id }}' }
+        - { option: 'aws_secret_access_key', value: '{{ aws.aws_secret_access_key }}' }
+        - { option: 'aws_region', value: '{{ aws.aws_region }}' }
+
+    - name: Populate install-config template
+      ansible.builtin.template:
+        src: "{{ role_path }}/templates/install-config.yaml.j2"
+        dest: "{{ install_path.path }}/install-config.yaml"
+
+    - name: Print log path for live monitoring
+      ansible.builtin.debug:
+        msg: "Installer starting. For live output: tail -f {{ install_path.path }}/.openshift_install.log"
+
+    - name: Run IPI installer
+      ansible.builtin.command: >
+        {{ bin_dir }}/openshift-install create cluster
+        --dir={{ install_path.path }}
+        --log-level=info
+      async: 3600
+      poll: 0
+      register: cluster_deploy
+
+    - name: Check the status of the install
+      ansible.builtin.async_status:
+        jid: "{{ cluster_deploy.ansible_job_id }}"
+      register: job_status
+      until: job_status.finished
+      retries: 120
+      delay: 30
+  when: >
+    not cluster_dir_stat.stat.exists or
+    not auth_dir_stat.stat.exists or
+    not kubeadmin_pwd_stat.stat.exists
+
+- debug:
+    msg: "Cluster console available at: https://console-openshift-console.apps.{{ ocp_cluster.name }}.{{ base_domain }}/"
+
+- name: Get kubeconfig auth
+  set_fact:
+    kubefile: "{{ install_dir }}/{{ ocp_cluster.name }}/auth/kubeadmin-password"
+
+- name: Slurp the remote file
+  ansible.builtin.slurp:
+    src: "{{ kubefile }}"
+  register: remote_kube_file
+
+- debug:
+    msg: "kubeadmin pw: {{ remote_kube_file['content'] | b64decode }}"

@@ -1,0 +1,12 @@
+---
+- name: Ensure requisite Python modules are installed
+  ansible.builtin.pip:
+    name: "{{ item }}"
+    executable: pip3  # Ensures it uses pip3 specifically
+    state: present    # 'present' ensures it is installed but won't upgrade if already there
+  loop:
+    - setuptools
+    - kubernetes
+    - openshift
+    - boto3
+...

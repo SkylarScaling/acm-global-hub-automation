@@ -1,0 +1,21 @@
+global:
+  resolve_timeout: 5m
+  smtp_smarthost: '{{ alerting_smtp_host }}:{{ alerting_smtp_port }}'
+  smtp_from: '{{ alerting_smtp_from }}'
+  smtp_require_tls: {{ smtp.require_tls }}
+  smtp_auth_username: '{{ smtp.username }}'
+  smtp_auth_password: '{{ smtp.app_password }}'
+route:
+  receiver: 'default-email'
+  group_by: ['cluster', 'alertname']
+  routes:
+    - matchers:
+        - namespace="esp-job-test-application"
+      receiver: 'esp-team-email'
+receivers:
+  - name: 'default-email'
+    email_configs:
+      - to: '{{ smtp.default_to }}'
+  - name: 'esp-team-email'
+    email_configs:
+      - to: '{{ smtp.esp_to }}'

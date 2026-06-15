@@ -1,0 +1,18 @@
+apiVersion: cluster.open-cluster-management.io/v1
+kind: ManagedCluster
+metadata:
+  name: {{ cluster_name }}
+  labels:
+    cloud: Amazon
+    vendor: OpenShift
+    cluster.open-cluster-management.io/clusterset: {{ parent_clusterset }}
+{% if gitops_version is defined %}
+    argocd.version: "{{ gitops_version }}"
+{% endif %}
+{% if is_regional_hub | default(false) | bool %}
+    # Identifies this cluster as a Regional Hub to the Global Hub
+    global-hub.open-cluster-management.io/managed-hub: "true"
+    global-hub.open-cluster-management.io/deploy-mode: "hosted"
+{% endif %}
+spec:
+  hubAcceptsClient: true

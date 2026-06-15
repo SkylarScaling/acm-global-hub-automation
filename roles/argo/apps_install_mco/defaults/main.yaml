@@ -1,0 +1,11 @@
+---
+mco_argocd_app_name: "mco-observability"
+mco_argocd_namespace: "openshift-gitops"
+mco_argocd_project: "default"
+mco_argocd_sync_policy: "Automatic"
+
+mco_git_repo_url: "https://github.com/SkylarScaling/gitops-install-mco.git"
+mco_git_repo_path: "mco"
+mco_git_repo_revision: "main"
+
+mco_target_namespace: "open-cluster-management-observability"

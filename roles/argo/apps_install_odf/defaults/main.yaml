@@ -1,0 +1,15 @@
+---
+# ArgoCD Application Configuration
+odf_argocd_app_name: "odf-storage"
+odf_argocd_namespace: "openshift-gitops"
+odf_argocd_project: "default"
+odf_argocd_sync_policy: "Automatic"
+
+# Git Repository Configuration
+# Update this to match your actual repository housing the ODF manifests
+odf_git_repo_url: "https://github.com/SkylarScaling/gitops-install-odf.git"
+odf_git_repo_path: "odf"
+odf_git_repo_revision: "main"
+
+# Target Namespace for ODF deployment
+odf_target_namespace: "openshift-storage"

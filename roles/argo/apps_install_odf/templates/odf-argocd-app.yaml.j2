@@ -1,0 +1,32 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ odf_argocd_app_name }}
+  namespace: {{ odf_argocd_namespace }}
+spec:
+  project: {{ odf_argocd_project }}
+  source:
+    repoURL: {{ odf_git_repo_url }}
+    targetRevision: '{{ odf_git_repo_revision }}'
+    path: {{ odf_git_repo_path }}
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ odf_target_namespace }}
+  syncPolicy:
+{% if odf_argocd_sync_policy == "Automatic" %}
+    automated:
+      prune: true
+      selfHeal: true
+{% endif %}
+    syncOptions:
+      - CreateNamespace=true
+      - SkipDryRunOnMissingResource=true
+    # A standard retry block acts as a safety net for transient network blips
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 3m

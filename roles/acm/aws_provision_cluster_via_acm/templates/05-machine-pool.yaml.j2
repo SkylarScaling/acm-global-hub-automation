@@ -1,0 +1,76 @@
+---
+# Default Worker Pool
+apiVersion: hive.openshift.io/v1
+kind: MachinePool
+metadata:
+  name: {{ ocp_cluster.name }}-worker
+  namespace: {{ ocp_cluster.name }}
+spec:
+  clusterDeploymentRef:
+    name: {{ ocp_cluster.name }}
+  name: worker
+  platform:
+    aws:
+      type: {{ install_config.workers.instance_type }}
+      rootVolume:
+        iops: 3000
+        size: 120
+        type: gp3
+  replicas: {{ install_config.workers.replicas }}
+
+{% if install_config.infra is defined %}
+---
+# Infra Node Pool
+apiVersion: hive.openshift.io/v1
+kind: MachinePool
+metadata:
+  name: {{ ocp_cluster.name }}-infra
+  namespace: {{ ocp_cluster.name }}
+spec:
+  clusterDeploymentRef:
+    name: {{ ocp_cluster.name }}
+  name: infra
+  labels:
+    node-role.kubernetes.io/infra: ""
+  taints:
+    - effect: NoSchedule
+      key: node-role.kubernetes.io/infra
+  platform:
+    aws:
+      type: {{ install_config.infra.instance_type }}
+      rootVolume:
+        iops: 3000
+        size: 120
+        type: gp3
+  replicas: {{ install_config.infra.replicas }}
+{% endif %}
+
+{% if install_config.storage is defined %}
+---
+# Storage Node Pool
+apiVersion: hive.openshift.io/v1
+kind: MachinePool
+metadata:
+  name: {{ ocp_cluster.name }}-storage
+  namespace: {{ ocp_cluster.name }}
+spec:
+  clusterDeploymentRef:
+    name: {{ ocp_cluster.name }}
+  name: storage
+  labels:
+    cluster.ocs.openshift.io/openshift-storage: ""
+    node-role.kubernetes.io/worker: ""
+    node-role.kubernetes.io/storage: ""
+  taints:
+    - effect: NoSchedule
+      key: node.ocs.openshift.io/storage
+      value: "true"
+  platform:
+    aws:
+      type: {{ install_config.storage.instance_type }}
+      rootVolume:
+        iops: 3000
+        size: 120
+        type: gp3
+  replicas: {{ install_config.storage.replicas }}
+{% endif %}

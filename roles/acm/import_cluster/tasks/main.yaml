@@ -1,0 +1,35 @@
+---
+- name: Read Spoke Kubeconfig from disk
+  ansible.builtin.slurp:
+    src: "{{ spoke_kubeconfig }}"
+  register: spoke_kubeconfig_raw
+
+# Create ManagedCluster first so ACM doesn't garbage collect the namespace
+- name: Create ManagedCluster object on Hub
+  kubernetes.core.k8s:
+    kubeconfig: "{{ hub_kubeconfig }}"
+    state: present
+    template: "01-managed-cluster.yaml.j2"
+
+- name: Create Spoke Cluster Namespace on Hub
+  kubernetes.core.k8s:
+    kubeconfig: "{{ hub_kubeconfig }}"
+    state: present
+    template: "02-namespace.yaml.j2"
+
+- name: Create auto-import-secret on Hub
+  kubernetes.core.k8s:
+    kubeconfig: "{{ hub_kubeconfig }}"
+    state: present
+    template: "03-auto-import-secret.yaml.j2"
+
+- name: Wait for Spoke Cluster to join the Hub
+  ansible.builtin.shell: >
+    {{ bin_dir }}/oc get managedcluster {{ cluster_name }}
+    --kubeconfig {{ hub_kubeconfig }}
+    -o jsonpath='{.status.conditions[?(@.type=="ManagedClusterJoined")].status}' 2>/dev/null || true
+  register: mc_join_status
+  until: mc_join_status.stdout == "True"
+  retries: 60
+  delay: 10
+  changed_when: false

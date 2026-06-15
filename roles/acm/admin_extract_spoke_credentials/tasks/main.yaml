@@ -1,0 +1,50 @@
+---
+- name: Ensure local auth directory exists for Spoke
+  ansible.builtin.file:
+    path: "{{ install_dir }}/{{ ocp_cluster.name }}/auth"
+    state: directory
+    mode: '0755'
+
+- name: Extract Spoke Kubeconfig from Parent Hub via Labels
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ target_kubeconfig }}"
+    api_version: v1
+    kind: Secret
+    namespace: "{{ ocp_cluster.name }}"
+    label_selectors:
+      - "hive.openshift.io/cluster-deployment-name={{ ocp_cluster.name }}"
+      - "hive.openshift.io/secret-type=kubeconfig"
+  register: kubeconfig_secret
+  retries: 30
+  delay: 10
+  until:
+    - kubeconfig_secret.resources is defined
+    - kubeconfig_secret.resources | length > 0
+
+- name: Extract Spoke Kubeadmin Password from Parent Hub via Labels
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ target_kubeconfig }}"
+    api_version: v1
+    kind: Secret
+    namespace: "{{ ocp_cluster.name }}"
+    label_selectors:
+      - "hive.openshift.io/cluster-deployment-name={{ ocp_cluster.name }}"
+      - "hive.openshift.io/secret-type=kubeadmincreds"
+  register: password_secret
+  retries: 30
+  delay: 10
+  until:
+    - password_secret.resources is defined
+    - password_secret.resources | length > 0
+
+- name: Write Spoke kubeconfig locally
+  ansible.builtin.copy:
+    content: "{{ kubeconfig_secret.resources[0].data.kubeconfig | b64decode }}"
+    dest: "{{ install_dir }}/{{ ocp_cluster.name }}/auth/kubeconfig"
+    mode: '0600'
+
+- name: Write Spoke kubeadmin password locally
+  ansible.builtin.copy:
+    content: "{{ password_secret.resources[0].data.password | b64decode }}"
+    dest: "{{ install_dir }}/{{ ocp_cluster.name }}/auth/kubeadmin-password"
+    mode: '0600'

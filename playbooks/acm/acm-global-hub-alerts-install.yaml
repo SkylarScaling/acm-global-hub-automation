@@ -1,0 +1,16 @@
+---
+- name: Install Enterprise Observability Alerts via ACM Policy
+  hosts: localhost
+  vars_files:
+    - ../group_vars/all.yaml
+  connection: local
+  gather_facts: false
+  environment:
+    KUBECONFIG: "{{ install_dir }}/{{ ocp_cluster.name }}/auth/kubeconfig"
+
+  tasks:
+    - name: Deploy Alerting Policies to the Global Hub
+      ansible.builtin.include_role:
+        name: acm/policy_install_observability_alerts
+      vars:
+        target_kubeconfig: "{{ install_dir }}/{{ ocp_cluster.name }}/auth/kubeconfig"

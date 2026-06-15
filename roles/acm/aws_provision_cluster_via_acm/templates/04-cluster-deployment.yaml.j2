@@ -1,0 +1,22 @@
+apiVersion: hive.openshift.io/v1
+kind: ClusterDeployment
+metadata:
+  name: {{ ocp_cluster.name }}
+  namespace: {{ ocp_cluster.name }}
+  labels:
+    cluster.open-cluster-management.io/clusterset: {{ parent_clusterset }}
+spec:
+  baseDomain: {{ base_domain }}
+  clusterName: {{ ocp_cluster.name }}
+  platform:
+    aws:
+      credentialsSecretRef:
+        name: {{ ocp_cluster.name }}-aws-creds
+      region: {{ aws.aws_region }}
+  provisioning:
+    imageSetRef:
+      name: {{ spoke_clusterimageset_name }}
+    installConfigSecretRef:
+      name: {{ ocp_cluster.name }}-install-config
+  pullSecretRef:
+    name: {{ ocp_cluster.name }}-pull-secret

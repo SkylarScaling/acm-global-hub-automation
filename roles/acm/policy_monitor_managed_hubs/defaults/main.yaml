@@ -1,0 +1,3 @@
+---
+# Target Cluster Set for Policies
+spokes_clusterset: default

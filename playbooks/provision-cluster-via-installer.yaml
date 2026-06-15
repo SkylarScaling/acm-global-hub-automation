@@ -1,0 +1,90 @@
+---
+- name: Install OCP on AWS
+  gather_facts: false
+  hosts: localhost
+  tasks:
+    - debug:
+        msg: "Provisioning and Configuring OCP Cluster on AWS"
+
+- name: Install Pre-requisites
+  ansible.builtin.import_playbook: ocp/install-ocp-prerequisites.yaml
+
+- name: Provision OCP Cluster on AWS via IPI
+  ansible.builtin.import_playbook: ocp/provision-cluster.yaml
+
+- name: Creating Infra MachineSet
+  ansible.builtin.import_playbook: ocp/aws-create-infra-machinesets.yaml
+
+- name: Install ArgoCD to ACM Hub
+  ansible.builtin.import_playbook: ocp/install-argo.yaml
+
+- name: Install Day 2 Config via GitOps
+  ansible.builtin.import_playbook: argo/argo-day2-config.yaml
+
+- name: Verify GitOps Deployments and Display Credentials
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  environment:
+    KUBECONFIG: "{{ install_dir }}/{{ ocp_cluster.name }}/auth/kubeconfig"
+  tasks:
+    - name: Discover all currently deployed Argo CD Applications
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ target_kubeconfig }}"
+        api_version: argoproj.io/v1alpha1
+        kind: Application
+        namespace: openshift-gitops
+      register: discovered_argo_apps
+
+    - name: Wait for all discovered Argo CD Applications to be Healthy and Synced
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ target_kubeconfig }}"
+        api_version: argoproj.io/v1alpha1
+        kind: Application
+        name: "{{ item.metadata.name }}"
+        namespace: openshift-gitops
+      register: app_status
+      # This until block safely checks nested dictionaries, preventing "undefined" crashes
+      until:
+        - app_status.resources | length > 0
+        - app_status.resources[0].status is defined
+        - app_status.resources[0].status.health is defined
+        - app_status.resources[0].status.health.status | default('Unknown') == 'Healthy'
+        - app_status.resources[0].status.sync is defined
+        - app_status.resources[0].status.sync.status | default('Unknown') == 'Synced'
+      retries: 60       # Wait up to 10 minutes per app (60 * 10 seconds)
+      delay: 10
+      loop: "{{ discovered_argo_apps.resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}" # Keeps Ansible console output clean
+
+#    - name: Install ACM Policies
+#      include_role:
+#        name: "{{ item }}"
+#      loop:
+#        - acm/policy_install_openshift_gitops_1.18
+#        - acm/policy_install_openshift_gitops_1.19
+
+    - name: Fetch kubeadmin password from install directory
+      ansible.builtin.slurp:
+        src: "{{ install_dir }}/{{ ocp_cluster.name }}/auth/kubeadmin-password"
+      register: kubeadmin_password_raw
+
+    - name: Set cluster credentials fact
+      ansible.builtin.set_fact:
+        kubeadmin_password: "{{ kubeadmin_password_raw.content | b64decode }}"
+
+    - name: Print Final Cluster Handoff Details
+      ansible.builtin.debug:
+        msg:
+          - "=================================================================="
+          - "🎉 CLUSTER PROVISIONING AND GITOPS DEPLOYMENT COMPLETE! 🎉"
+          - "=================================================================="
+          - "Cluster Name: {{ ocp_cluster.name }}"
+          - "OCP Version:  {{ openshift_version }}.{{ ocp_patch_version }}"
+          - "Web Console:  https://console-openshift-console.apps.{{ ocp_cluster.name }}.{{ ocp_cluster.base_domain }}/"
+          - "Username:     kubeadmin"
+          - "Password:     {{ kubeadmin_password }}"
+          - "=================================================================="
+          - "All ArgoCD Applications are Healthy and Synced."
+...

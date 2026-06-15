@@ -1,0 +1,35 @@
+---
+- name: Verify that the openshift-gitops namespace exists
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ target_kubeconfig }}"
+    api_version: v1
+    kind: Namespace
+    name: "{{ odf_argocd_namespace }}"
+  register: gitops_ns
+  until: gitops_ns.resources | length > 0
+  retries: 30
+  delay: 10
+
+- name: Wait for ArgoCD Application Controller ServiceAccount to be scaffolded
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ target_kubeconfig }}"
+    api_version: v1
+    kind: ServiceAccount
+    name: openshift-gitops-argocd-application-controller
+    namespace: "{{ odf_argocd_namespace }}"
+  register: argocd_sa
+  until: argocd_sa.resources | length > 0
+  retries: 30
+  delay: 10
+
+- name: Grant ArgoCD Application Controller cluster-admin permissions
+  kubernetes.core.k8s:
+    kubeconfig: "{{ target_kubeconfig }}"
+    state: present
+    template: argocd-rbac.yaml.j2
+
+- name: Create the OpenShift GitOps Application
+  kubernetes.core.k8s:
+    kubeconfig: "{{ target_kubeconfig }}"
+    state: present
+    template: odf-argocd-app.yaml.j2

@@ -1,0 +1,117 @@
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: global-to-regional-alerts-policy
+  namespace: default
+spec:
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: regional-observability-config
+          annotations:
+            # Tell ACM's policy engine to ignore template brackets in the payloads below
+            policy.open-cluster-management.io/disable-templates: "true"
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            # PAYLOAD 1: The Alertmanager Config
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: alertmanager-config
+                  namespace: open-cluster-management-observability
+                type: Opaque
+                data:
+                  # Since the Secret naturally expects Base64, we can safely leave this as b64encode
+                  alertmanager.yaml: {{ lookup('template', 'alertmanager.yaml.j2') | b64encode }}
+
+            # PAYLOAD 2: The Custom Rules
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: thanos-ruler-custom-rules
+                  namespace: open-cluster-management-observability
+                data:
+                  # We use 'data' and 'indent' so the MCO operator correctly detects the plaintext file
+                  custom_rules.yaml: |
+{{ lookup('template', 'custom_rules.yaml.j2') | indent(20, True) }}
+
+            # PAYLOAD 3: The Unified Metrics Allowlist (Infra + User Workload)
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: observability-metrics-custom-allowlist
+                  namespace: open-cluster-management-observability
+                data:
+                  # Infrastructure Metrics (K8s/Platform)
+                  metrics_list.yaml: |
+                    names:
+                      - kube_job_status_failed
+                      - kube_pod_container_status_restarts_total
+                      - velero_backup_failure_total
+                      - rox_vulnerability_count
+                      - kube_pod_container_resource_requests
+                      - node_memory_Active_bytes
+                      - cluster:cpu_usage_cores:sum
+                      - cluster:memory_usage_bytes:sum
+                      - cluster:capacity_memory_bytes:sum
+                      - container_memory_working_set_bytes
+                      - kube_node_status_allocatable
+                      - kube_pod_container_resource_limits
+                      - container_cpu_usage_seconds_total
+                      - kube_node_info
+                      - kube_service_info
+                      - kube_deployment_metadata_generation
+                      - kube_daemonset_metadata_generation
+                      - kube_statefulset_metadata_generation
+                      - kube_configmap_info
+                      - kube_secret_info
+                      - container_network_receive_bytes_total
+                      - container_network_transmit_bytes_total
+                      - kube_node_spec_taint
+                      - kubelet_volume_stats_used_bytes
+                      - kubelet_volume_stats_available_bytes
+                      - kube_pod_spec_volumes_persistentvolumeclaims_info
+                      - container_spec_cpu_quota
+                      - container_spec_memory_limit_bytes
+                      - container_memory_rss
+                      - kube_pod_created
+                      - kube_pod_container_info
+                      - container_fs_limit_bytes
+                      - container_fs_usage_bytes
+
+                  # User Workload Metrics (ArgoCD)
+                  uwl_metrics_list.yaml: |
+                    names:
+                      - process_start_time_seconds
+                      - argocd_cluster_info
+                      - argocd_app_info
+                      - argocd_app_sync_total
+                      - argocd_app_reconcile_count
+                      - argocd_app_reconcile_bucket
+                      - argocd_git_request_duration_seconds_bucket
+                      - argocd_app_k8s_request_total
+                      - go_memstats_heap_alloc_bytes
+                      - process_cpu_seconds_total
+                      - go_goroutines
+                      - workqueue_depth
+                      - grpc_server_handled_total
+                      - argocd_cluster_events_total
+                      - argocd_cluster_api_resources
+                      - argocd_cluster_api_resource_objects
+                      - argocd_git_request_total
+                      - go_gc_duration_seconds
+                      - argocd_redis_request_total
+                      - kube_pod_info

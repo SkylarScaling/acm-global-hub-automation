@@ -1,0 +1,9 @@
+---
+# Common Directories
+bin_dir: "~/.local/bin"
+working_dir: "{{ tmp_dir }}"
+install_dir: "{{ working_dir }}/acm-global-hub/install"
+
+# Optional features (override in inventory to enable)
+enable_uwm: false
+...

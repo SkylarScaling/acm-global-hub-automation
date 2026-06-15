@@ -1,0 +1,32 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ gh_argocd_app_name }}
+  namespace: {{ gh_argocd_namespace }}
+spec:
+  project: {{ gh_argocd_project }}
+  source:
+    repoURL: {{ gh_git_repo_url }}
+    targetRevision: {{ gh_git_repo_revision }}
+    path: {{ gh_git_repo_path }}
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ gh_target_namespace }}
+  syncPolicy:
+{% if gh_argocd_sync_policy == "Automatic" %}
+    automated:
+      prune: true
+      selfHeal: true
+{% endif %}
+    syncOptions:
+      - CreateNamespace=true
+      - SkipDryRunOnMissingResource=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 3m

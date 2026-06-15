@@ -1,0 +1,86 @@
+---
+# Allows the policy namespace to see clusters in the target set
+apiVersion: cluster.open-cluster-management.io/v1beta2
+kind: ManagedClusterSetBinding
+metadata:
+  name: "{{ spokes_clusterset }}"
+  namespace: {{ uwm_policy_namespace }}
+spec:
+  clusterSet: "{{ spokes_clusterset }}"
+
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: uwm-placement
+  namespace: {{ uwm_policy_namespace }}
+spec:
+  clusterSets:
+    - "{{ spokes_clusterset }}"
+
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: enforce-uwm-enablement
+  namespace: {{ uwm_policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: Configuration Baseline
+    policy.open-cluster-management.io/categories: CM Configuration Management
+spec:
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: configure-cluster-monitoring
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: cluster-monitoring-config
+                  namespace: openshift-monitoring
+                  annotations:
+                    policy.open-cluster-management.io/disable-templates: "false"
+                data:
+                  config.yaml: |
+                    {% raw %}{{- $cm := lookup "v1" "ConfigMap" "openshift-monitoring" "cluster-monitoring-config" -}}
+                    {{- $config_dict := dict -}}
+                    {{- if and $cm $cm.data (hasKey $cm.data "config.yaml") -}}
+                      {{- $config_dict = (index $cm.data "config.yaml" | fromYAML) -}}
+                    {{- end -}}
+                    {{- $_ := set $config_dict "enableUserWorkload" true -}}
+                    {{- toYAML $config_dict | nindent 20 }}{% endraw %}
+
+---
+apiVersion: policy.open-cluster-management.io/v1beta1
+kind: PolicySet
+metadata:
+  name: observability-enhancements
+  namespace: {{ uwm_policy_namespace }}
+spec:
+  description: "Deploys advanced observability configurations to managed clusters"
+  policies:
+    - enforce-uwm-enablement
+
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: uwm-placement-binding
+  namespace: {{ uwm_policy_namespace }}
+placementRef:
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+  name: uwm-placement
+subjects:
+  - apiGroup: policy.open-cluster-management.io
+    kind: PolicySet
+    name: observability-enhancements

@@ -1,0 +1,24 @@
+---
+- name: Determine replicas for this specific AZ
+  ansible.builtin.set_fact:
+    az_replicas: >-
+      {{
+        (pool_replicas | int // subnet_info_result.subnets | length) +
+        (1 if subnet_index < (pool_replicas | int % subnet_info_result.subnets | length) else 0)
+      }}
+
+- name: Set MachineSet name
+  ansible.builtin.set_fact:
+    machineset_name: "{{ cluster_id }}-{{ pool_name }}-{{ current_subnet.availability_zone }}"
+
+- name: Apply the generated MachineSet YAML to OpenShift cluster
+  kubernetes.core.k8s:
+    kubeconfig: "{{ target_kubeconfig }}"
+    state: present
+    definition: "{{ lookup('template', 'machineset.yaml.j2') | from_yaml }}"
+  when: az_replicas | int > 0
+
+- name: Display MachineSet application status
+  ansible.builtin.debug:
+    msg: "Created MachineSet {{ machineset_name }} with {{ az_replicas }} replicas."
+  when: az_replicas | int > 0

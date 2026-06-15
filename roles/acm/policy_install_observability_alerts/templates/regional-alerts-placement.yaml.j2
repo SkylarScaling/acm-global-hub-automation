@@ -1,0 +1,45 @@
+---
+# The Permission: Grants the 'default' namespace access to see the Regional Hubs
+apiVersion: cluster.open-cluster-management.io/v1beta2
+kind: ManagedClusterSetBinding
+metadata:
+  # Using default filter to catch it if not defined globally
+  name: "{{ spokes_clusterset }}"
+  namespace: default
+spec:
+  clusterSet: "{{ spokes_clusterset }}"
+
+---
+# The Router: Find all Regional Hubs based on their managed-hub label
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: regional-hubs-alerts-placement
+  namespace: default
+spec:
+  clusterSets:
+    - "{{ spokes_clusterset }}"
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: "{{ regional_hub_cluster_label_key }}"
+              operator: In
+              values:
+                - "{{ regional_hub_cluster_label_value }}"
+
+---
+# The Glue: Bind the Policy to the Placement
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: regional-alerts-binding
+  namespace: default
+placementRef:
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+  name: regional-hubs-alerts-placement
+subjects:
+  - apiGroup: policy.open-cluster-management.io
+    kind: Policy
+    name: global-to-regional-alerts-policy

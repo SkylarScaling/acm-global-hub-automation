@@ -1,0 +1,67 @@
+apiVersion: machine.openshift.io/v1beta1
+kind: MachineSet
+metadata:
+  labels:
+    machine.openshift.io/cluster-api-cluster: {{ cluster_id }}
+    machine.openshift.io/cluster-api-machine-role: {{ pool_name }}
+    machine.openshift.io/cluster-api-machine-type: {{ pool_name }}
+  name: {{ machineset_name }}
+  namespace: openshift-machine-api
+spec:
+  replicas: {{ az_replicas }}
+  selector:
+    matchLabels:
+      machine.openshift.io/cluster-api-cluster: {{ cluster_id }}
+      machine.openshift.io/cluster-api-machineset: {{ machineset_name }}
+  template:
+    metadata:
+      labels:
+        machine.openshift.io/cluster-api-cluster: {{ cluster_id }}
+        machine.openshift.io/cluster-api-machine-role: {{ pool_name }}
+        machine.openshift.io/cluster-api-machine-type: {{ pool_name }}
+        machine.openshift.io/cluster-api-machineset: {{ machineset_name }}
+    spec:
+      metadata:
+        labels:
+{{ pool_labels | to_nice_yaml | indent(10, true) }}
+      taints:
+{{ pool_taints | to_nice_yaml | indent(8, true) }}
+      providerSpec:
+        value:
+          apiVersion: awsproviderconfig.k8s.io/v1beta1
+          ami:
+            id: {{ ami_id }}
+          credentialsSecret:
+            name: aws-cloud-credentials
+          deviceIndex: 0
+          iamInstanceProfile:
+            id: {{ cluster_id }}-worker-profile
+          instanceType: {{ pool_instance_type }}
+          kind: AWSMachineProviderConfig
+          placement:
+            availabilityZone: {{ current_subnet.availability_zone }}
+            region: {{ aws.aws_region }}
+          publicIp: false
+          blockDevices:
+            - ebs:
+                encrypted: true
+                iops: 0
+                kmsKey: {}
+                volumeSize: 120
+                volumeType: gp3
+          securityGroups:
+            - filters:
+                - name: 'tag:Name'
+                  values:
+                    - {{ cluster_id }}-node
+            - filters:
+                - name: 'tag:Name'
+                  values:
+                    - {{ cluster_id }}-lb
+          subnet:
+            id: {{ current_subnet.id }}
+          tags:
+            - name: kubernetes.io/cluster/{{ cluster_id }}
+              value: owned
+          userDataSecret:
+            name: worker-user-data

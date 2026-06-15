@@ -1,0 +1,82 @@
+---
+# Namespace Permission: Grants the 'default' namespace access to the 'default' ClusterSet
+apiVersion: cluster.open-cluster-management.io/v1beta2
+kind: ManagedClusterSetBinding
+metadata:
+  name: "{{ spokes_clusterset }}"
+  namespace: default
+spec:
+  clusterSet: "{{ spokes_clusterset }}"
+---
+# Placement
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: managed-hub-violations-placement
+  namespace: default
+spec:
+  clusterSets:
+    - "{{ spokes_clusterset }}"
+
+---
+# Policy: Monitor Managed Hub Violations (Inform)
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: monitor-managed-hub-violations
+  namespace: default
+  annotations:
+    policy.open-cluster-management.io/standards: Configuration Baseline
+    policy.open-cluster-management.io/categories: CM Configuration Management
+spec:
+  remediationAction: inform
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: check-for-noncompliant-policies
+        spec:
+          remediationAction: inform
+          severity: high
+          namespaceSelector:
+            # Exclude the namespace where the Global Hub drops this policy to prevent infinite loops,
+            # and ignore core ACM agent namespaces where internal objects live.
+            exclude: ["{{ '{{ .ManagedClusterName }}' }}", "open-cluster-management-agent*"]
+            include: ["*"]
+          object-templates:
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: policy.open-cluster-management.io/v1
+                kind: Policy
+                status:
+                  compliant: NonCompliant
+
+---
+# PolicySet
+apiVersion: policy.open-cluster-management.io/v1beta1
+kind: PolicySet
+metadata:
+  name: managed-hub-monitoring
+  namespace: default
+spec:
+  description: "Monitors Managed Hubs for sub-policy violations"
+  policies:
+    - monitor-managed-hub-violations
+
+---
+# PlacementBinding
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: managed-hub-violations-binding
+  namespace: default
+placementRef:
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+  name: managed-hub-violations-placement
+subjects:
+  - apiGroup: policy.open-cluster-management.io
+    kind: PolicySet
+    name: managed-hub-monitoring

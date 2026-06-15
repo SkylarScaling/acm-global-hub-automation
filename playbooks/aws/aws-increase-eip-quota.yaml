@@ -1,0 +1,12 @@
+---
+- name: Request Increase in AWS Elastic IP Quota
+  hosts: localhost
+  vars_files:
+    - ../group_vars/all.yaml
+  connection: local
+  gather_facts: false
+  environment:
+    KUBECONFIG: "{{ install_dir }}/{{ ocp_cluster.name }}/auth/kubeconfig"
+
+  roles:
+    - role: aws/aws_eip_quota

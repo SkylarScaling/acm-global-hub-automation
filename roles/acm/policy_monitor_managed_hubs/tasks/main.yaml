@@ -1,0 +1,6 @@
+---
+- name: Deploy Managed Hub Violations Check Policy
+  kubernetes.core.k8s:
+    kubeconfig: "{{ target_kubeconfig }}"
+    state: present
+    template: "violations-policy.yaml.j2"

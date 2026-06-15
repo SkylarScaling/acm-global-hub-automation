@@ -1,0 +1,19 @@
+---
+- name: Wait for ACM CRDs to be fully registered by the Operator
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ target_kubeconfig }}"
+    api_version: apiextensions.k8s.io/v1
+    kind: CustomResourceDefinition
+    name: managedclustersetbindings.cluster.open-cluster-management.io
+  register: crd_check
+  until:
+    - crd_check.resources is defined
+    - crd_check.resources | length > 0
+  retries: 60  # Wait up to 10 minutes (60 * 10s)
+  delay: 10
+
+- name: Deploy Argo CD Installation Policy to Regional Hub
+  kubernetes.core.k8s:
+    kubeconfig: "{{ target_kubeconfig }}"
+    state: present
+    template: "argocd-policy.yaml.j2"

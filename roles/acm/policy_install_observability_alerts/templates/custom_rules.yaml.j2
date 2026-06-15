@@ -1,0 +1,75 @@
+groups:
+  - name: custom-kpi-alerts
+    rules:
+      # --- Original Baseline Alerts ---
+      - alert: ManagedClusterOffline
+        expr: absent(apiserver_request_total{job="apiserver"})
+        for: {{ spoke_offline_threshold_minutes }}
+        labels:
+          severity: critical
+        annotations:
+          summary: "Cluster {% raw %}{{ $labels.cluster }}{% endraw %} is unreachable."
+          description: "The Regional Hub has lost contact with the Spoke."
+
+      - alert: ESPJobFailed
+        expr: kube_job_status_failed{namespace="esp-job-test-application"} > 0
+        for: 1m
+        labels:
+          severity: warning
+          team: esp-batch
+        annotations:
+          summary: "ESP Job Failed on {% raw %}{{ $labels.cluster }}{% endraw %}"
+          description: "Job {% raw %}{{ $labels.job_name }}{% endraw %} failed to complete."
+
+      # --- KPI: Node Health & Resource Utilization ---
+      - alert: NodeMemoryCritical
+        expr: (sum by (cluster, instance) (node_memory_MemTotal_bytes) - sum by (cluster, instance) (node_memory_MemFree_bytes + node_memory_Cached_bytes + node_memory_Buffers_bytes)) / sum by (cluster, instance) (node_memory_MemTotal_bytes) * 100 > 90
+        for: 10m
+        labels:
+          severity: critical
+          team: platform-ops
+        annotations:
+          summary: "High Memory on node {% raw %}{{ $labels.instance }}{% endraw %} in {% raw %}{{ $labels.cluster }}{% endraw %}"
+          description: "Node memory utilization has exceeded 90% for over 10 minutes."
+
+      - alert: NodeNotReady
+        expr: kube_node_status_condition{condition="Ready", status="unknown"} == 1 or kube_node_status_condition{condition="Ready", status="false"} == 1
+        for: 5m
+        labels:
+          severity: critical
+          team: platform-ops
+        annotations:
+          summary: "Node {% raw %}{{ $labels.node }}{% endraw %} is offline in {% raw %}{{ $labels.cluster }}{% endraw %}"
+
+      # --- KPI: Pod Success Rate ---
+      - alert: PodCrashLooping
+        expr: increase(kube_pod_container_status_restarts_total[15m]) > 2
+        for: 1m
+        labels:
+          severity: warning
+          team: app-delivery
+        annotations:
+          summary: "Pod {% raw %}{{ $labels.pod }}{% endraw %} is crash looping on {% raw %}{{ $labels.cluster }}{% endraw %}"
+          description: "Container {% raw %}{{ $labels.container }}{% endraw %} in namespace {% raw %}{{ $labels.namespace }}{% endraw %} is repeatedly crashing."
+
+      # --- KPI: Backup & Restore Success Rate ---
+      - alert: ClusterBackupFailed
+        expr: increase(velero_backup_failure_total[24h]) > 0
+        for: 5m
+        labels:
+          severity: critical
+          team: platform-ops
+        annotations:
+          summary: "OADP Backup Failed on {% raw %}{{ $labels.cluster }}{% endraw %}"
+          description: "A scheduled Velero backup failed to complete successfully in the last 24 hours."
+
+      # --- KPI: Vulnerability Scan Results ---
+      - alert: CriticalVulnerabilityDeployed
+        expr: rox_vulnerability_count{severity="CRITICAL"} > 0
+        for: 15m
+        labels:
+          severity: critical
+          team: security-ops
+        annotations:
+          summary: "Critical CVE detected on {% raw %}{{ $labels.cluster }}{% endraw %}"
+          description: "A workload with a CRITICAL severity vulnerability has been detected in namespace {% raw %}{{ $labels.namespace }}{% endraw %}."

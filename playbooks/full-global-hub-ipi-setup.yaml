@@ -1,0 +1,407 @@
+---
+# ==============================================================================
+# TIER 1: Provision Global Hub (IPI)
+# ==============================================================================
+- name: Tier 1 - Provision Global Hub
+  hosts: hub_cluster
+  connection: local
+  gather_facts: false
+  tags: ['tier1', 'global']
+  tasks:
+    - name: Ensure prerequisites are met
+      ansible.builtin.include_role:
+        name: ocp/install_ocp_prerequisites
+
+    - name: Request Elastic IP Quota Increase
+      ansible.builtin.include_role:
+        name: aws/aws_eip_quota
+
+    - name: Provision Global Hub via IPI
+      ansible.builtin.include_role:
+        name: ocp/aws_provision_ocp_ipi
+
+    # Since IPI provisions the cluster directly, its kubeconfig is generated locally.
+    - name: Set Global Hub Kubeconfig Path
+      ansible.builtin.set_fact:
+        global_hub_kubeconfig: "{{ install_dir }}/{{ ocp_cluster.name }}/auth/kubeconfig"
+
+    - name: Create Infrastructure Node Pool
+      block:
+        - ansible.builtin.include_role:
+            name: ocp/aws_create_machineset
+          vars:
+            target_kubeconfig: "{{ global_hub_kubeconfig }}"
+            pool_name: "infra"
+            pool_replicas: "{{ install_config.infra.replicas }}"
+            pool_instance_type: "{{ install_config.infra.instance_type }}"
+            pool_labels:
+              node-role.kubernetes.io/infra: ""
+            pool_taints:
+              - effect: NoSchedule
+                key: node-role.kubernetes.io/infra
+      when: install_config.infra is defined
+
+    - name: Create ODF Storage Node Pool
+      block:
+        - ansible.builtin.include_role:
+            name: ocp/aws_create_machineset
+          vars:
+            target_kubeconfig: "{{ global_hub_kubeconfig }}"
+            pool_name: "storage"
+            pool_replicas: "{{ install_config.storage.replicas }}"
+            pool_instance_type: "{{ install_config.storage.instance_type }}"
+            pool_labels:
+              cluster.ocs.openshift.io/openshift-storage: ""
+              node-role.kubernetes.io/worker: ""
+              node-role.kubernetes.io/storage: ""
+            pool_taints:
+              - effect: NoSchedule
+                key: node.ocs.openshift.io/storage
+                value: "true"
+      when: install_config.storage is defined
+
+    - name: Install Global Hub GitOps
+      block:
+        - ansible.builtin.include_role:
+            name: ocp/install_openshift_gitops
+          vars:
+            target_kubeconfig: "{{ global_hub_kubeconfig }}"
+
+    - name: Install Global Hub Day 2 Config
+      block:
+        - ansible.builtin.include_role:
+            name: "{{ item }}"
+          loop:
+            - argo/apps_install_acm
+            - argo/apps_install_odf
+            - argo/apps_install_mco
+            - argo/apps_install_global_hub
+          vars:
+            target_kubeconfig: "{{ global_hub_kubeconfig }}"
+
+    - name: Configure Search Add-on for Global Hub (local-cluster)
+      ansible.builtin.include_role:
+        name: acm/configure_search_addon
+      vars:
+        target_kubeconfig: "{{ global_hub_kubeconfig }}"
+        search_target_namespaces:
+          - "local-cluster"
+
+    - name: Wait For Argo Apps to Install
+      block:
+        - ansible.builtin.include_role:
+            name: ocp/waitfor_argo_apps
+          vars:
+            target_kubeconfig: "{{ global_hub_kubeconfig }}"
+
+    - name: Deploy Enterprise Observability Alerts Policy
+      block:
+        - ansible.builtin.include_role:
+            name: acm/policy_install_observability_alerts
+          vars:
+            target_kubeconfig: "{{ global_hub_kubeconfig }}"
+            spokes_clusterset: "{{ ocp_cluster.spokes_clusterset }}"
+
+    - name: Configure Regional Hub Addons
+      block:
+        - ansible.builtin.include_role:
+            name: acm/configure_regional_hub_addons
+          vars:
+            target_kubeconfig: "{{ global_hub_kubeconfig }}"
+
+    - name: Fetch Global Hub kubeadmin password
+      ansible.builtin.slurp:
+        src: "{{ install_dir }}/{{ ocp_cluster.name }}/auth/kubeadmin-password"
+      register: global_hub_password_raw
+
+    - name: Print Final Environment Details
+      ansible.builtin.debug:
+        msg:
+          - "=================================================================="
+          - "Global Hub Cluster: {{ ocp_cluster.name }}"
+          - "Web Console:        https://console-openshift-console.apps.{{ ocp_cluster.name }}.{{ base_domain }}/"
+          - "Username:           kubeadmin"
+          - "Password:           {{ global_hub_password_raw.content | b64decode }}"
+          - "=================================================================="
+
+# ==============================================================================
+# TIER 2: Provision Regional Hubs (via IPI)
+# ==============================================================================
+- name: Tier 2 - Provision Regional Hubs
+  hosts: regional_hubs
+  connection: local
+  gather_facts: false
+  tags: ['tier2', 'regional']
+  tasks:
+    - name: Set Global Hub Kubeconfig
+      ansible.builtin.set_fact:
+        global_hub_kubeconfig: "{{ install_dir }}/{{ hostvars[groups['hub_cluster'][0]]['ocp_cluster']['name'] }}/auth/kubeconfig"
+
+    - name: Request Elastic IP Quota Increase
+      ansible.builtin.include_role:
+        name: aws/aws_eip_quota
+
+    - name: Provision Regional Hub via IPI
+      block:
+        - ansible.builtin.include_role:
+            name: ocp/aws_provision_ocp_ipi
+
+    # Since we used IPI, the Kubeconfig is already local. No need to extract it from Hive via ACM.
+    - name: Set Regional Hub Kubeconfig Fact
+      ansible.builtin.set_fact:
+        regional_hub_kubeconfig: "{{ install_dir }}/{{ ocp_cluster.name }}/auth/kubeconfig"
+
+    - name: Create Infrastructure Node Pool
+      block:
+        - ansible.builtin.include_role:
+            name: ocp/aws_create_machineset
+          vars:
+            target_kubeconfig: "{{ regional_hub_kubeconfig }}"
+            pool_name: "infra"
+            pool_replicas: "{{ install_config.infra.replicas }}"
+            pool_instance_type: "{{ install_config.infra.instance_type }}"
+            pool_labels:
+              node-role.kubernetes.io/infra: ""
+            pool_taints:
+              - effect: NoSchedule
+                key: node-role.kubernetes.io/infra
+      when: install_config.infra is defined
+
+    - name: Create ODF Storage Node Pool
+      block:
+        - ansible.builtin.include_role:
+            name: ocp/aws_create_machineset
+          vars:
+            target_kubeconfig: "{{ regional_hub_kubeconfig }}"
+            pool_name: "storage"
+            pool_replicas: "{{ install_config.storage.replicas }}"
+            pool_instance_type: "{{ install_config.storage.instance_type }}"
+            pool_labels:
+              cluster.ocs.openshift.io/openshift-storage: ""
+              node-role.kubernetes.io/worker: ""
+              node-role.kubernetes.io/storage: ""
+            pool_taints:
+              - effect: NoSchedule
+                key: node.ocs.openshift.io/storage
+                value: "true"
+      when: install_config.storage is defined
+
+    - name: Import Regional Hub into the Global Hub
+      ansible.builtin.include_role:
+        name: acm/import_cluster
+      vars:
+        hub_kubeconfig: "{{ global_hub_kubeconfig }}"
+        spoke_kubeconfig: "{{ regional_hub_kubeconfig }}"
+        cluster_name: "{{ ocp_cluster.name }}"
+        parent_clusterset: "{{ ocp_cluster.parent_clusterset }}"
+        is_regional_hub: true
+
+    - name: Configure Search Add-on for Regional Hub on Global Hub
+      ansible.builtin.include_role:
+        name: acm/configure_search_addon
+      vars:
+        target_kubeconfig: "{{ global_hub_kubeconfig }}"
+        search_target_namespaces:
+          - "{{ ocp_cluster.name }}"
+
+    - name: Grant Hosted Governance Framework Agent permission to read its mailbox
+      kubernetes.core.k8s:
+        kubeconfig: "{{ global_hub_kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: RoleBinding
+          metadata:
+            name: hosted-governance-framework-reader
+            namespace: "{{ ocp_cluster.name }}"
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: ClusterRole
+            name: open-cluster-management:managedcluster:addon-governance-policy-framework
+          subjects:
+            - kind: User
+              name: "system:open-cluster-management:cluster:{{ ocp_cluster.name }}:addon:governance-policy-framework:agent:governance-policy-framework"
+              apiGroup: rbac.authorization.k8s.io
+
+    - name: Grant Hosted Search Collector Agent permission to read its mailbox
+      kubernetes.core.k8s:
+        kubeconfig: "{{ global_hub_kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: RoleBinding
+          metadata:
+            name: hosted-search-collector-reader
+            namespace: "{{ ocp_cluster.name }}"
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: ClusterRole
+            name: open-cluster-management:managedcluster:addon-search-collector
+          subjects:
+            - kind: User
+              name: "system:open-cluster-management:cluster:{{ ocp_cluster.name }}:addon:search-collector:agent:search-collector"
+              apiGroup: rbac.authorization.k8s.io
+
+    - name: Install Regional Hub GitOps
+      block:
+        - ansible.builtin.include_role:
+            name: ocp/install_openshift_gitops
+          vars:
+            target_kubeconfig: "{{ regional_hub_kubeconfig }}"
+
+    - name: Install Regional Hub Day 2 Config
+      block:
+        - ansible.builtin.include_role:
+            name: "{{ item }}"
+          loop:
+            - argo/apps_install_acm
+            - argo/apps_install_odf
+            - argo/apps_install_mco
+          vars:
+            target_kubeconfig: "{{ regional_hub_kubeconfig }}"
+
+    - name: Wait For Argo Apps to Install
+      block:
+        - ansible.builtin.include_role:
+            name: ocp/waitfor_argo_apps
+          vars:
+            target_kubeconfig: "{{ regional_hub_kubeconfig }}"
+
+    - name: Install ACM Policies
+      block:
+        - ansible.builtin.include_role:
+            name: "{{ item }}"
+          loop:
+            - acm/policy_install_openshift_gitops_1.18
+            - acm/policy_install_openshift_gitops_1.19
+          vars:
+            spokes_clusterset: "{{ ocp_cluster.spokes_clusterset }}"
+            target_kubeconfig: "{{ regional_hub_kubeconfig }}"
+
+    - name: Deploy User Workload Monitoring Policy (optional)
+      ansible.builtin.include_role:
+        name: acm/policy_enable_uwm
+      vars:
+        spokes_clusterset: "{{ ocp_cluster.spokes_clusterset }}"
+        target_kubeconfig: "{{ regional_hub_kubeconfig }}"
+      when: enable_uwm | default(false) | bool
+
+    - name: Deploy Custom Executive KPI Dashboards
+      block:
+        - ansible.builtin.include_role:
+            name: acm/global_hub_custom_dashboards
+          vars:
+            target_kubeconfig: "{{ regional_hub_kubeconfig }}"
+
+    - name: Configure Managed Cluster Addons
+      block:
+        - ansible.builtin.include_role:
+            name: acm/configure_managed_cluster_addons
+          vars:
+            target_kubeconfig: "{{ regional_hub_kubeconfig }}"
+
+    - name: Configure Search Add-on for Regional Hub (local-cluster)
+      ansible.builtin.include_role:
+        name: acm/configure_search_addon
+      vars:
+        target_kubeconfig: "{{ regional_hub_kubeconfig }}"
+        search_target_namespaces:
+          - "local-cluster"
+
+# ==============================================================================
+# TIER 3: Provision Managed Clusters (via IPI)
+# ==============================================================================
+- name: Tier 3 - Provision Managed Clusters
+  hosts: managed_clusters
+  connection: local
+  gather_facts: false
+  tags: ['tier3', 'spokes']
+  tasks:
+    - name: Set Parent Hub Kubeconfig
+      ansible.builtin.set_fact:
+        parent_hub_kubeconfig: "{{ install_dir }}/{{ regional_hub }}/auth/kubeconfig"
+
+    - name: Request Elastic IP Quota Increase
+      ansible.builtin.include_role:
+        name: aws/aws_eip_quota
+
+    - name: Provision Managed Cluster via IPI
+      block:
+        - ansible.builtin.include_role:
+            name: ocp/aws_provision_ocp_ipi
+
+    # Since we used IPI, the Kubeconfig is already local. No need to extract it from Hive via ACM.
+    - name: Set Managed Cluster Kubeconfig Fact
+      ansible.builtin.set_fact:
+        managed_cluster_kubeconfig: "{{ install_dir }}/{{ ocp_cluster.name }}/auth/kubeconfig"
+
+    - name: Import Managed Cluster into the Regional Hub
+      ansible.builtin.include_role:
+        name: acm/import_cluster
+      vars:
+        hub_kubeconfig: "{{ parent_hub_kubeconfig }}"
+        spoke_kubeconfig: "{{ managed_cluster_kubeconfig }}"
+        cluster_name: "{{ ocp_cluster.name }}"
+        parent_clusterset: "{{ ocp_cluster.parent_clusterset }}"
+
+    - name: Ensure Observability Namespace exists on the Spoke
+      kubernetes.core.k8s:
+        kubeconfig: "{{ managed_cluster_kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: open-cluster-management-observability
+
+    - name: Configure Search Add-on for Managed Cluster on Regional Hub
+      ansible.builtin.include_role:
+        name: acm/configure_search_addon
+      vars:
+        target_kubeconfig: "{{ parent_hub_kubeconfig }}"
+        search_target_namespaces:
+          - "{{ ocp_cluster.name }}"
+
+# ==============================================================================
+# SUMMARY: Final Environment Handoff
+# ==============================================================================
+- name: Deployment Summary
+  hosts: hub_cluster
+  connection: local
+  gather_facts: false
+  tags: ['summary']
+  tasks:
+    - name: Build per-cluster connection info
+      ansible.builtin.set_fact:
+        _summary_lines: "{{ _summary_lines | default([]) + _entry }}"
+      vars:
+        _name: "{{ hostvars[item]['ocp_cluster']['name'] }}"
+        _role: >-
+          {%- if item in groups['hub_cluster'] -%}Global Hub
+          {%- elif item in groups['regional_hubs'] -%}Regional Hub
+          {%- else -%}Managed Cluster{%- endif -%}
+        _pwd: "{{ lookup('file', install_dir + '/' + _name + '/auth/kubeadmin-password') }}"
+        _entry:
+          - ""
+          - "{{ _role }}:  {{ _name }}"
+          - "  Console:    https://console-openshift-console.apps.{{ _name }}.{{ base_domain }}/"
+          - "  Username:   kubeadmin"
+          - "  Password:   {{ _pwd }}"
+          - "  Kubeconfig: {{ install_dir }}/{{ _name }}/auth/kubeconfig"
+      loop: >-
+        {{
+          groups['hub_cluster'] +
+          (groups['regional_hubs'] | default([])) +
+          (groups['managed_clusters'] | default([]))
+        }}
+
+    - name: Print Full Deployment Summary
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            ['==================================================================',
+             '🎉 FULL ENVIRONMENT PROVISIONING COMPLETE! 🎉',
+             '=================================================================='] +
+            _summary_lines +
+            ['', '==================================================================']
+          }}

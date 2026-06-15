@@ -1,0 +1,81 @@
+---
+# 1. Ensure the Regional Hubs ClusterSet exists
+apiVersion: cluster.open-cluster-management.io/v1beta2
+kind: ManagedClusterSet
+metadata:
+  name: {{ ocp_cluster.spokes_clusterset }}
+
+---
+# 2. Bind the spokes cluster set to the default namespace
+apiVersion: cluster.open-cluster-management.io/v1beta2
+kind: ManagedClusterSetBinding
+metadata:
+  name: {{ ocp_cluster.spokes_clusterset }}
+  namespace: default
+spec:
+  clusterSet: {{ ocp_cluster.spokes_clusterset }}
+
+---
+# 3. Bind the default cluster set so the local-cluster placement works
+apiVersion: cluster.open-cluster-management.io/v1beta2
+kind: ManagedClusterSetBinding
+metadata:
+  name: default
+  namespace: default
+spec:
+  clusterSet: default
+
+---
+apiVersion: addon.open-cluster-management.io/v1alpha1
+kind: AddOnDeploymentConfig
+metadata:
+  name: regional-hub-addon-config
+  namespace: default
+spec:
+  agentInstallNamespace: global-hub-policy-agents
+
+---
+# The Placement for the Global Hub's own local-cluster
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: local-cluster-addon-placement
+  namespace: default
+spec:
+  clusterSets:
+    - default
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchLabels:
+            local-cluster: "true"
+
+---
+# The Placement for the Regional Hubs
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ ocp_cluster.spokes_clusterset }}-addon-placement
+  namespace: default
+spec:
+  clusterSets:
+    - {{ ocp_cluster.spokes_clusterset }}
+
+---
+apiVersion: addon.open-cluster-management.io/v1alpha1
+kind: ClusterManagementAddOn
+metadata:
+  name: "{{ item }}"
+spec:
+  installStrategy:
+    type: Placements
+    placements:
+      - name: {{ ocp_cluster.spokes_clusterset }}-addon-placement
+        namespace: default
+        configs:
+          - group: addon.open-cluster-management.io
+            resource: addondeploymentconfigs
+            name: regional-hub-addon-config
+            namespace: default
+      - name: local-cluster-addon-placement
+        namespace: default

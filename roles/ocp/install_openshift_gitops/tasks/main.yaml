@@ -1,0 +1,157 @@
+---
+- name: "Ensure the Operator Namespace Exists"
+  kubernetes.core.k8s:
+    kubeconfig: "{{ target_kubeconfig }}"
+    api_version: v1
+    kind: Namespace
+    name: "{{ gitops_operator_namespace }}"
+    state: present
+
+# Note: If installing to 'openshift-operators', the OperatorGroup already exists.
+# We only create one if we are using a custom namespace.
+- name: "Create OperatorGroup for GitOps (if custom namespace)"
+  kubernetes.core.k8s:
+    kubeconfig: "{{ target_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: operators.coreos.com/v1
+      kind: OperatorGroup
+      metadata:
+        name: openshift-gitops-operator-group
+        namespace: "{{ gitops_operator_namespace }}"
+  when: gitops_operator_namespace != "openshift-operators"
+
+- name: "Subscribe to OpenShift GitOps Operator"
+  kubernetes.core.k8s:
+    kubeconfig: "{{ target_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: operators.coreos.com/v1alpha1
+      kind: Subscription
+      metadata:
+        name: openshift-gitops-operator
+        namespace: "{{ gitops_operator_namespace }}"
+      spec:
+        channel: "{{ gitops_operator_channel }}"
+        installPlanApproval: Automatic
+        name: openshift-gitops-operator
+        source: "{{ gitops_operator_source }}"
+        sourceNamespace: "{{ gitops_operator_source_namespace }}"
+
+- name: "Wait for GitOps Operator CSV to be installed"
+  ansible.builtin.shell: >
+    {{ bin_dir }}/oc get subscriptions.operators.coreos.com openshift-gitops-operator
+    -n {{ gitops_operator_namespace }}
+    --kubeconfig {{ target_kubeconfig }}
+    -o jsonpath='{.status.installedCSV}{.status.currentCSV}' 2>/dev/null || true
+  register: gitops_sub
+  until: gitops_sub.stdout != ""
+  retries: 30
+  delay: 10
+  changed_when: false
+  when: wait_for_operator_ready
+
+- name: "Wait for the GitOps Operator Deployment to be Ready"
+  ansible.builtin.shell: >
+    {{ bin_dir }}/oc get deployment
+    -n {{ gitops_operator_namespace }}
+    --kubeconfig {{ target_kubeconfig }}
+    -l operators.coreos.com/openshift-gitops-operator.{{ gitops_operator_namespace }}
+    -o jsonpath='{.items[0].status.availableReplicas}' 2>/dev/null || true
+  register: gitops_deployment
+  until: (gitops_deployment.stdout | default('0') | int) > 0
+  retries: 60
+  delay: 10
+  changed_when: false
+  when: wait_for_operator_ready
+
+- name: "Wait for the default openshift-gitops ArgoCD instance to be auto-created by the Operator"
+  ansible.builtin.shell: >
+    {{ bin_dir }}/oc get argocd openshift-gitops
+    -n {{ acm_argocd_namespace }}
+    --kubeconfig {{ target_kubeconfig }}
+    -o jsonpath='{.metadata.name}' 2>/dev/null || true
+  register: default_argocd
+  until: default_argocd.stdout == "openshift-gitops"
+  retries: 30  # Wait up to 5 minutes (30 * 10s) for the operator to scaffold the instance
+  delay: 10
+  changed_when: false
+
+- name: "Teach ArgoCD how to evaluate OLM health (Patch)"
+  kubernetes.core.k8s:
+    kubeconfig: "{{ target_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: argoproj.io/v1beta1
+      kind: ArgoCD
+      metadata:
+        name: openshift-gitops
+        namespace: "{{ acm_argocd_namespace }}"
+      spec:
+        resourceHealthChecks:
+          - group: operators.coreos.com
+            kind: Subscription
+            check: |
+              hs = {}
+              hs.status = "Progressing"
+              hs.message = "Waiting for Subscription to resolve..."
+              if obj.status ~= nil then
+                if obj.status.conditions ~= nil then
+                  for i, condition in ipairs(obj.status.conditions) do
+                    if condition.status == "True" then
+                      if condition.type == "ResolutionFailed" or
+                         condition.type == "CatalogSourcesUnhealthy" or
+                         condition.type == "InstallPlanMissing" then
+                        hs.status = "Degraded"
+                        hs.message = (condition.reason or condition.type) .. ": " .. (condition.message or "Unknown error")
+                        return hs
+                      end
+                    end
+                  end
+                end
+                if obj.status.installedCSV ~= nil then
+                  hs.status = "Healthy"
+                  hs.message = "CSV " .. obj.status.installedCSV .. " is installed"
+                  return hs
+                end
+              end
+              return hs
+
+          - group: operators.coreos.com
+            kind: ClusterServiceVersion
+            check: |
+              hs = {}
+              hs.status = "Progressing"
+              hs.message = "Waiting for CSV phase..."
+              if obj.status ~= nil and obj.status.phase ~= nil then
+                local phase = obj.status.phase
+                local message = obj.status.message or obj.status.reason or ("CSV is " .. phase)
+
+                if phase == "Succeeded" then
+                  hs.status = "Healthy"
+                  hs.message = "Operator is running: " .. message
+                  return hs
+                end
+                if phase == "Failed" then
+                  hs.status = "Degraded"
+                  hs.message = "Operator failed: " .. message
+                  return hs
+                end
+                if phase == "Pending" or phase == "Installing" or phase == "Replacing" then
+                  hs.status = "Progressing"
+                  hs.message = message
+                  return hs
+                end
+
+                hs.status = "Unknown"
+                hs.message = "Unknown CSV phase: " .. phase
+                return hs
+              end
+              return hs
+  register: argocd_patch
+  until: argocd_patch is not failed
+  retries: 12
+  delay: 10
+
+- debug:
+    msg: "OpenShift GitOps installed successfully. The default 'openshift-gitops' namespace should now be initializing."

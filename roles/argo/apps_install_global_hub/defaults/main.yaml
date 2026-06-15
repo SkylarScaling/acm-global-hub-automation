@@ -1,0 +1,11 @@
+---
+gh_argocd_app_name: "global-hub"
+gh_argocd_namespace: "openshift-gitops"
+gh_argocd_project: "default"
+gh_argocd_sync_policy: "Automatic"
+
+gh_git_repo_url: "https://github.com/SkylarScaling/gitops-install-global-hub.git"
+gh_git_repo_path: "global-hub"
+gh_git_repo_revision: "main"
+
+gh_target_namespace: "multicluster-global-hub"

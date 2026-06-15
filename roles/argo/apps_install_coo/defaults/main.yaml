@@ -1,0 +1,14 @@
+---
+# ArgoCD Application Configuration
+coo_argocd_app_name: "coo-observability"
+coo_argocd_namespace: "openshift-gitops"
+coo_argocd_project: "default"
+coo_argocd_sync_policy: "Automatic"
+
+# Git Repository Configuration
+coo_git_repo_url: "https://github.com/SkylarScaling/gitops-install-coo.git"
+coo_git_repo_path: "coo"
+coo_git_repo_revision: "main"
+
+# Target Namespace for COO deployment
+coo_target_namespace: "openshift-cluster-observability-operator"

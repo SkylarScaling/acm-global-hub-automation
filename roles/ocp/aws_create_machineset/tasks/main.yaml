@@ -1,0 +1,86 @@
+---
+- name: Check if pool configuration is provided
+  ansible.builtin.assert:
+    that:
+      - pool_name is defined
+      - pool_replicas is defined
+      - pool_instance_type is defined
+      - pool_labels is defined
+      - pool_taints is defined
+    msg: "Please define pool_name, pool_replicas, pool_instance_type, pool_labels, and pool_taints."
+
+- name: Skip if requested replicas are 0
+  ansible.builtin.meta: end_host
+  when: pool_replicas | int == 0
+
+- name: Get Cluster Infrastructure Name (Cluster ID)
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ target_kubeconfig }}"
+    api_version: config.openshift.io/v1
+    kind: Infrastructure
+    name: cluster
+  register: infra_info
+
+- name: Set cluster_id fact
+  ansible.builtin.set_fact:
+    cluster_id: "{{ infra_info.resources[0].status.infrastructureName }}"
+
+- name: Get all MachineSets in the machine-api namespace
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ target_kubeconfig }}"
+    api_version: machine.openshift.io/v1beta1
+    kind: MachineSet
+    namespace: openshift-machine-api
+  register: all_machinesets
+
+- name: Extract the first worker MachineSet
+  ansible.builtin.set_fact:
+    worker_machineset: "{{ all_machinesets.resources | selectattr('metadata.name', 'search', '-worker-') | first | default(None) }}"
+
+- name: Verify a worker MachineSet was found
+  ansible.builtin.assert:
+    that:
+      - worker_machineset is not none
+    fail_msg: "Could not find any MachineSets with '-worker-' in the name. Please verify the cluster has provisioned worker nodes and your KUBECONFIG is correct."
+
+- name: Set ami_id from the found worker MachineSet
+  ansible.builtin.set_fact:
+    ami_id: "{{ worker_machineset.spec.template.spec.providerSpec.value.ami.id }}"
+
+- name: Display dynamically fetched Cluster ID and AMI
+  ansible.builtin.debug:
+    msg:
+      - "Cluster ID: {{ cluster_id }}"
+      - "AMI ID: {{ ami_id }}"
+      - "Building Pool: {{ pool_name }}"
+
+- name: Get VPC information by cluster Name tag
+  amazon.aws.ec2_vpc_net_info:
+    region: "{{ aws.aws_region }}"
+    access_key: "{{ aws.aws_access_key_id }}"
+    secret_key: "{{ aws.aws_secret_access_key }}"
+    filters:
+      "tag:Name": "{{ cluster_id }}-vpc"
+  register: vpc_info_result
+  failed_when: vpc_info_result.vpcs | length != 1
+
+- name: Get private subnets associated with the found VPC
+  amazon.aws.ec2_vpc_subnet_info:
+    region: "{{ aws.aws_region }}"
+    access_key: "{{ aws.aws_access_key_id }}"
+    secret_key: "{{ aws.aws_secret_access_key }}"
+    filters:
+      vpc-id: "{{ vpc_info_result.vpcs[0].id }}"
+      "tag:Name": "*private*" # Target private subnets specifically for internal nodes
+  register: subnet_info_result
+  failed_when: subnet_info_result.subnets | length == 0
+
+- name: Generate and apply MachineSets per Subnet/AZ
+  include_tasks: create_machineset.yaml
+  loop: "{{ subnet_info_result.subnets }}"
+  loop_control:
+    loop_var: current_subnet
+    index_var: subnet_index
+
+- name: Wait for newly created {{ pool_name }} Nodes to be Ready
+  include_tasks: wait_for_nodes.yaml

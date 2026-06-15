@@ -1,0 +1,151 @@
+---
+# Workaround for hive-controllers CrashLoopBackOff on MCE 2.11.x caused by a
+# broken OpenAPI $ref in the clusterview/v1alpha1 UserPermission type served by
+# ocm-proxyserver. The kube-apiserver aggregates this broken schema, causing
+# Hive's resource.Helper initialisation to fatal on any affected controller.
+#
+# The hive-operator itself has the same crash and cannot reconcile HiveConfig
+# changes, so the deployment must be patched directly.
+#
+# This role is a no-op outside the affected version range and is idempotent
+# if the workaround has already been applied.
+# See: ISSUES.md #10
+
+# ==============================================================================
+# STEP 1 — Detect the installed MCE version
+# ==============================================================================
+- name: Query MultiClusterEngine resource to detect installed version
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ target_kubeconfig }}"
+    api_version: multicluster.openshift.io/v1
+    kind: MultiClusterEngine
+    name: multiclusterengine
+  register: _mce_resource
+
+- name: Extract MCE version from MultiClusterEngine status
+  ansible.builtin.set_fact:
+    _mce_version: "{{ _mce_resource.resources[0].status.currentVersion }}"
+
+# ==============================================================================
+# STEP 2 — Evaluate whether the workaround is required
+# ==============================================================================
+- name: Determine if hive-controllers workaround is required for MCE {{ _mce_version }}
+  ansible.builtin.set_fact:
+    _hive_workaround_required: >-
+      {{
+        _mce_version is version(mce_hive_openapi_bug_min_version, '>=', version_type='semver') and
+        _mce_version is version(mce_hive_openapi_bug_fixed_version, '<', version_type='semver')
+      }}
+
+- name: Report workaround status
+  ansible.builtin.debug:
+    msg: >-
+      MCE {{ _mce_version }} —
+      {% if _hive_workaround_required %}
+      ⚠️  In affected range [{{ mce_hive_openapi_bug_min_version }}, {{ mce_hive_openapi_bug_fixed_version }}].
+      Applying hive-controllers OpenAPI schema workaround.
+      {% else %}
+      ✅ Not in affected range. No workaround needed.
+      {% endif %}
+
+# ==============================================================================
+# STEP 3 — Apply the workaround (skipped if not required)
+# ==============================================================================
+- name: Apply hive-controllers OpenAPI schema workaround
+  when: _hive_workaround_required
+  block:
+
+    - name: Get current hive-controllers deployment
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ target_kubeconfig }}"
+        api_version: apps/v1
+        kind: Deployment
+        name: hive-controllers
+        namespace: hive
+      register: _hive_deployment
+
+    - name: Verify --disabled-controllers flag is present in deployment args
+      ansible.builtin.assert:
+        that:
+          - _hive_deployment.resources | length > 0
+          - "'--disabled-controllers' in _hive_deployment.resources[0].spec.template.spec.containers[0].args"
+        fail_msg: >-
+          hive-controllers deployment does not contain --disabled-controllers in its args.
+          The Hive deployment structure may have changed. Review ISSUES.md #10 and
+          apply the workaround manually.
+
+    - name: Parse current args and locate --disabled-controllers value
+      ansible.builtin.set_fact:
+        _hive_container_name: "{{ _hive_deployment.resources[0].spec.template.spec.containers[0].name }}"
+        _hive_args: "{{ _hive_deployment.resources[0].spec.template.spec.containers[0].args }}"
+        _disabled_idx: "{{ _hive_deployment.resources[0].spec.template.spec.containers[0].args.index('--disabled-controllers') }}"
+
+    - name: Extract current disabled controllers list
+      ansible.builtin.set_fact:
+        _current_disabled: "{{ _hive_args[_disabled_idx | int + 1].split(',') }}"
+
+    - name: Check if workaround controllers are already disabled (idempotency)
+      ansible.builtin.set_fact:
+        _workaround_already_applied: >-
+          {{ mce_hive_openapi_disabled_controllers | difference(_current_disabled) | length == 0 }}
+
+    - name: Skip — workaround already applied
+      ansible.builtin.debug:
+        msg: >-
+          ✅ Controllers already disabled: {{ mce_hive_openapi_disabled_controllers | join(', ') }}.
+          No patch needed.
+      when: _workaround_already_applied
+
+    - name: Build updated args list with workaround controllers added
+      ansible.builtin.set_fact:
+        _new_disabled_str: >-
+          {{ (_current_disabled + mce_hive_openapi_disabled_controllers) | unique | join(',') }}
+        _new_args: >-
+          {{
+            _hive_args[:_disabled_idx | int + 1] +
+            [(_current_disabled + mce_hive_openapi_disabled_controllers) | unique | join(',')] +
+            _hive_args[_disabled_idx | int + 2:]
+          }}
+      when: not _workaround_already_applied
+
+    - name: Patch hive-controllers deployment to disable affected controllers
+      kubernetes.core.k8s:
+        kubeconfig: "{{ target_kubeconfig }}"
+        state: present
+        api_version: apps/v1
+        kind: Deployment
+        name: hive-controllers
+        namespace: hive
+        definition:
+          spec:
+            template:
+              spec:
+                containers:
+                  - name: "{{ _hive_container_name }}"
+                    args: "{{ _new_args }}"
+      when: not _workaround_already_applied
+
+    # The patch triggers a rolling restart. The new pod must wait up to 120 s for
+    # the old pod's leader lease to expire before it can start controllers.
+    - name: Wait for hive-controllers rollout to complete (allow 8 min for lease handover)
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ target_kubeconfig }}"
+        api_version: apps/v1
+        kind: Deployment
+        name: hive-controllers
+        namespace: hive
+      register: _hive_status
+      until:
+        - _hive_status.resources | length > 0
+        - _hive_status.resources[0].status.observedGeneration == _hive_status.resources[0].metadata.generation
+        - (_hive_status.resources[0].status.readyReplicas | default(0)) >= 1
+        - (_hive_status.resources[0].status.updatedReplicas | default(0)) >= 1
+      retries: 32
+      delay: 15
+      when: not _workaround_already_applied
+
+    - name: Confirm hive-controllers is healthy with workaround applied
+      ansible.builtin.debug:
+        msg: >-
+          ✅ hive-controllers is running. Disabled controllers: {{ _new_disabled_str }}
+      when: not _workaround_already_applied
