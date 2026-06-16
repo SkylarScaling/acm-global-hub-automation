@@ -4,9 +4,9 @@
 
 - [x] **1. `ansible.cfg` invisible from repo root** — Document that all playbooks must be run from the `playbooks/` directory so `ansible.cfg` (and its `roles_path`) is picked up correctly.
 - [x] **2. New inventory vars not consumed** — `ocp_cluster.managed_clusterset_name` / `managed_clusterset_namespace` exist in inventory but are hardcoded in `configure_regional_hub_addons` and `configure_managed_cluster_addons` templates.
-- [ ] **3. `full-global-hub-setup.yaml` Tier 2 missing `global_hub_custom_dashboards`** — The ACM/Hive variant doesn't deploy custom Grafana dashboards to Regional Hubs; the IPI variant does.
-- [ ] **4. `aws_provision_ocp_ipi` overwrites `~/.aws/credentials [default]`** — Should use a named profile instead of clobbering the default.
-- [ ] **5. Standalone playbooks under `playbooks/acm/` and `playbooks/argo/` can't resolve `ocp_cluster.name`** — These rely on an inventory host var not present in `group_vars/all.yaml`. Also, `acm-global-hub-policy-install.yaml` has a stale name/description.
+- [x] **3. `full-global-hub-setup.yaml` Tier 2 missing `regional_hub_custom_dashboards`** — The ACM/Hive variant doesn't deploy custom Grafana dashboards to Regional Hubs; the IPI variant does.
+- [x] **4. `aws_provision_ocp_ipi` overwrites `~/.aws/credentials [default]`** — Should use a named profile instead of clobbering the default.
+- [x] **5. Standalone playbooks under `playbooks/acm/` and `playbooks/argo/` can't resolve `ocp_cluster.name`** — These rely on an inventory host var not present in `group_vars/all.yaml`. Also, `acm-global-hub-policy-install.yaml` has a stale name/description.
 
 ## Credentials
 
@@ -62,6 +62,6 @@
 
 ## Optimizations
 
-- [ ] **7. `waitfor_argo_apps` times out serially** — Apps are waited on one-by-one; worst-case wait is `n_apps × 20 min` even though ArgoCD syncs them in parallel.
-- [ ] **8. `configure_search_addon` CRD wait always runs** — 30-minute retry loop fires on every run, including idempotent re-runs where the CRD already exists.
+- [x] **7. `waitfor_argo_apps` times out serially** — Apps are waited on one-by-one; worst-case wait is `n_apps × 20 min` even though ArgoCD syncs them in parallel.
+- [x] **8. `configure_search_addon` CRD wait always runs** — 30-minute retry loop fires on every run, including idempotent re-runs where the CRD already exists.
 - [x] **9. `ansible.cfg` missing readable output format** — Adding `stdout_callback = yaml` would improve readability of long provisioning runs.

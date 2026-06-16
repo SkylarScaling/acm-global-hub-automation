@@ -48,6 +48,16 @@
         path: "{{ install_dir }}/{{ ocp_cluster.name }}"
       register: install_path
 
+    - name: Write cluster fingerprint for pre-flight verification
+      ansible.builtin.copy:
+        dest: "{{ install_path.path }}/.cluster-fingerprint"
+        mode: '0644'
+        content: |
+          cluster_name: "{{ ocp_cluster.name }}"
+          base_domain: "{{ base_domain }}"
+          aws_account_id: "{{ aws.account_id }}"
+          aws_region: "{{ aws.aws_region }}"
+
     - name: print install_dir location for admin
       ansible.builtin.debug:
         msg: "The working directory location is {{ install_path.path }}"
@@ -58,10 +68,10 @@
         state: directory
         mode: "0755"
 
-    - name: Configure AWS credentials for the default profile
+    - name: Configure AWS credentials for cluster-scoped named profile
       ansible.builtin.ini_file:
         path: "~/.aws/credentials"
-        section: "default"
+        section: "ocp-{{ ocp_cluster.name }}"
         option: "{{ item.option }}"
         value: "{{ item.value }}"
         mode: '0600'
@@ -84,6 +94,9 @@
         {{ bin_dir }}/openshift-install create cluster
         --dir={{ install_path.path }}
         --log-level=info
+      environment:
+        AWS_PROFILE: "ocp-{{ ocp_cluster.name }}"
+        AWS_SESSION_TOKEN: ""  # Explicitly cleared — prevents a stale STS token from being inherited
       async: 3600
       poll: 0
       register: cluster_deploy

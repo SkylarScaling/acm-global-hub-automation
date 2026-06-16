@@ -1,4 +1,12 @@
 ---
+- name: Check if ManagedClusterAddOn CRD is already registered
+  ansible.builtin.shell: >
+    {{ bin_dir }}/oc get crd managedclusteraddons.addon.open-cluster-management.io
+    --kubeconfig {{ target_kubeconfig }}
+    -o jsonpath='{.metadata.name}' 2>/dev/null || true
+  register: crd_precheck
+  changed_when: false
+
 - name: Wait for ManagedClusterAddOn CRD to be registered by the Hub Operator
   ansible.builtin.shell: >
     {{ bin_dir }}/oc get crd managedclusteraddons.addon.open-cluster-management.io
@@ -9,6 +17,7 @@
   retries: 180
   delay: 10
   changed_when: false
+  when: crd_precheck.stdout == ""
 
 - name: Wait for target cluster namespaces to exist
   ansible.builtin.shell: >
