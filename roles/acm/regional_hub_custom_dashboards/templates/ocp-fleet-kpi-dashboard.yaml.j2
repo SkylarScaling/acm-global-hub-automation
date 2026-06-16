@@ -1,0 +1,436 @@
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: ocp-fleet-overview-caas-kpi-dashboard
+  namespace: open-cluster-management-observability
+  labels:
+    grafana-custom-dashboard: "true"
+  annotations:
+    observability.open-cluster-management.io/dashboard-folder: CaaS_KPI's
+data:
+  fleet-overview-caas-kpis.json: |-
+    {% raw %}
+    {
+      "annotations": { "list": [] },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 0,
+      "links": [],
+      "liveNow": false,
+      "panels": [
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "max": 100, "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "orange", "value": 90 },
+                  { "color": "yellow", "value": 95 },
+                  { "color": "green", "value": 99 }
+                ]
+              },
+              "unit": "percent"
+            }
+          },
+          "gridPos": { "h": 6, "w": 12, "x": 0, "y": 0 },
+          "id": 1,
+          "options": { "displayMode": "basic", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "$datasource" }, "editorMode": "code", "expr": "( (avg(up{job=~\"apiserver|kube-apiserver\"}) * 0.35) + (avg(up{job=\"etcd\"}) * 0.35) + (avg(kube_node_status_condition{condition=\"Ready\", status=\"true\"}) * 0.15) + (avg(up{namespace=\"openshift-ingress\"}) * 0.10) + (avg(up{job=\"console\"}) * 0.05) ) * 100", "legendFormat": "Fleet", "instant": true, "range": false, "refId": "A" }
+          ],
+          "title": "Fleet Health Score (%)",
+          "type": "bargauge"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "max": 100, "min": 0,
+              "mappings": [
+                {
+                  "options": { "match": "null", "result": { "text": "No Data" } },
+                  "type": "special"
+                },
+                {
+                  "options": { "from": 99.99, "to": 100, "result": { "color": "green", "index": 1, "text": "Meets Target" } },
+                  "type": "range"
+                },
+                {
+                  "options": { "from": 0, "to": 99.9899, "result": { "color": "red", "index": 2, "text": "Failing Target" } },
+                  "type": "range"
+                }
+              ],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "green", "value": 99.99 }
+                ]
+              },
+              "unit": "percent"
+            }
+          },
+          "gridPos": { "h": 6, "w": 12, "x": 12, "y": 0 },
+          "id": 2,
+          "options": { "displayMode": "basic", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "$datasource" }, "editorMode": "code", "expr": "avg( (avg by (cluster) (avg_over_time((max by (cluster, instance) (up{job=~\"apiserver|kube-apiserver\"}))[30d:5m]))) and on(cluster) max by (cluster) (up{job=~\"apiserver|kube-apiserver\"}) ) * 100", "legendFormat": "Fleet", "instant": true, "range": false, "refId": "A" }
+          ],
+          "title": "Fleet API 30-Day SLA (Target: 99.99%)",
+          "type": "bargauge"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "max": 100, "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "orange", "value": 90 },
+                  { "color": "yellow", "value": 95 },
+                  { "color": "green", "value": 99 }
+                ]
+              },
+              "unit": "percent"
+            }
+          },
+          "gridPos": { "h": 6, "w": 8, "x": 0, "y": 6 },
+          "id": 3,
+          "options": { "displayMode": "basic", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "$datasource" }, "editorMode": "code", "expr": "avg(up{job=~\"apiserver|kube-apiserver\"}) * 100", "legendFormat": "Fleet", "instant": true, "range": false, "refId": "A" }
+          ],
+          "title": "API Server Availability (%)",
+          "type": "bargauge"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "max": 100, "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "orange", "value": 90 },
+                  { "color": "yellow", "value": 95 },
+                  { "color": "green", "value": 99 }
+                ]
+              },
+              "unit": "percent"
+            }
+          },
+          "gridPos": { "h": 6, "w": 8, "x": 8, "y": 6 },
+          "id": 4,
+          "options": { "displayMode": "basic", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "$datasource" }, "editorMode": "code", "expr": "avg(up{job=\"etcd\"}) * 100", "legendFormat": "Fleet", "instant": true, "range": false, "refId": "A" }
+          ],
+          "title": "etcd Availability (%)",
+          "type": "bargauge"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "max": 100, "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "orange", "value": 90 },
+                  { "color": "yellow", "value": 95 },
+                  { "color": "green", "value": 99 }
+                ]
+              },
+              "unit": "percent"
+            }
+          },
+          "gridPos": { "h": 6, "w": 8, "x": 16, "y": 6 },
+          "id": 5,
+          "options": { "displayMode": "basic", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "$datasource" }, "editorMode": "code", "expr": "avg(kube_node_status_condition{condition=\"Ready\", status=\"true\"}) * 100", "legendFormat": "Fleet", "instant": true, "range": false, "refId": "A" }
+          ],
+          "title": "Node Readiness Ratio (%)",
+          "type": "bargauge"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "max": 100, "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "orange", "value": 90 },
+                  { "color": "yellow", "value": 95 },
+                  { "color": "green", "value": 99 }
+                ]
+              },
+              "unit": "percent"
+            }
+          },
+          "gridPos": { "h": 6, "w": 8, "x": 0, "y": 12 },
+          "id": 6,
+          "options": { "displayMode": "basic", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "$datasource" }, "editorMode": "code", "expr": "avg(up{namespace=\"openshift-ingress\"}) * 100", "legendFormat": "Fleet", "instant": true, "range": false, "refId": "A" }
+          ],
+          "title": "Ingress Router Availability (%)",
+          "type": "bargauge"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "max": 100, "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "orange", "value": 90 },
+                  { "color": "yellow", "value": 95 },
+                  { "color": "green", "value": 99 }
+                ]
+              },
+              "unit": "percent"
+            }
+          },
+          "gridPos": { "h": 6, "w": 8, "x": 8, "y": 12 },
+          "id": 7,
+          "options": { "displayMode": "basic", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "$datasource" }, "editorMode": "code", "expr": "avg(up{job=\"dns-default\"}) * 100", "legendFormat": "Fleet", "instant": true, "range": false, "refId": "A" }
+          ],
+          "title": "CoreDNS Availability (%)",
+          "type": "bargauge"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "max": 100, "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "orange", "value": 90 },
+                  { "color": "yellow", "value": 95 },
+                  { "color": "green", "value": 99 }
+                ]
+              },
+              "unit": "percent"
+            }
+          },
+          "gridPos": { "h": 6, "w": 8, "x": 16, "y": 12 },
+          "id": 8,
+          "options": { "displayMode": "basic", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "$datasource" }, "editorMode": "code", "expr": "avg(up{job=\"console\"}) * 100", "legendFormat": "Fleet", "instant": true, "range": false, "refId": "A" }
+          ],
+          "title": "Web Console Availability (%)",
+          "type": "bargauge"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 250 },
+                  { "color": "orange", "value": 500 },
+                  { "color": "red", "value": 1000 }
+                ]
+              },
+              "unit": "ms"
+            }
+          },
+          "gridPos": { "h": 6, "w": 12, "x": 0, "y": 18 },
+          "id": 9,
+          "options": { "displayMode": "basic", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "$datasource" }, "editorMode": "code", "expr": "max(apiserver_request_duration_seconds:histogram_quantile_99) * 1000", "legendFormat": "Fleet Max", "instant": true, "range": false, "refId": "A" }
+          ],
+          "title": "Highest API Server P99 Latency (ms)",
+          "type": "bargauge"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 10 },
+                  { "color": "orange", "value": 15 },
+                  { "color": "red", "value": 20 }
+                ]
+              },
+              "unit": "ms"
+            }
+          },
+          "gridPos": { "h": 6, "w": 12, "x": 12, "y": 18 },
+          "id": 10,
+          "options": { "displayMode": "basic", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "$datasource" }, "editorMode": "code", "expr": "max(histogram_quantile(0.99, sum by (cluster, le) (rate(etcd_disk_wal_fsync_duration_seconds_bucket{job=\"etcd\"}[15m])))) * 1000", "legendFormat": "Fleet Max", "instant": true, "range": false, "refId": "A" }
+          ],
+          "title": "Highest etcd Disk Fsync P99 Latency (ms)",
+          "type": "bargauge"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "max": 100, "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "orange", "value": 75 },
+                  { "color": "red", "value": 85 }
+                ]
+              },
+              "unit": "percent"
+            }
+          },
+          "gridPos": { "h": 6, "w": 6, "x": 0, "y": 24 },
+          "id": 11,
+          "options": { "displayMode": "basic", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "$datasource" }, "editorMode": "code", "expr": "avg(cluster:node_cpu:ratio{cluster!=\"\"}) * 100", "legendFormat": "Fleet Average", "instant": true, "range": false, "refId": "A" }
+          ],
+          "title": "CPU Utilization (%)",
+          "type": "bargauge"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "max": 100, "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "orange", "value": 75 },
+                  { "color": "red", "value": 85 }
+                ]
+              },
+              "unit": "percent"
+            }
+          },
+          "gridPos": { "h": 6, "w": 6, "x": 6, "y": 24 },
+          "id": 12,
+          "options": { "displayMode": "basic", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "$datasource" }, "editorMode": "code", "expr": "100 - (sum(node_memory_MemAvailable_bytes{job=\"node-exporter\", cluster!=\"\"}) / sum(node_memory_MemTotal_bytes{job=\"node-exporter\", cluster!=\"\"}) * 100)", "legendFormat": "Fleet Average", "instant": true, "range": false, "refId": "A" }
+          ],
+          "title": "Memory Utilization (%)",
+          "type": "bargauge"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "max": 100, "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "orange", "value": 75 },
+                  { "color": "red", "value": 85 }
+                ]
+              },
+              "unit": "percent"
+            }
+          },
+          "gridPos": { "h": 6, "w": 6, "x": 12, "y": 24 },
+          "id": 13,
+          "options": { "displayMode": "basic", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "$datasource" }, "editorMode": "code", "expr": "100 - (sum(node_filesystem_avail_bytes{job=\"node-exporter\", fstype=~\"ext4|xfs\", cluster!=\"\"}) / sum(node_filesystem_size_bytes{job=\"node-exporter\", fstype=~\"ext4|xfs\", cluster!=\"\"}) * 100)", "legendFormat": "Fleet Average", "instant": true, "range": false, "refId": "A" }
+          ],
+          "title": "Disk Utilization (%)",
+          "type": "bargauge"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "max": 100, "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "orange", "value": 75 },
+                  { "color": "red", "value": 85 }
+                ]
+              },
+              "unit": "percent"
+            }
+          },
+          "gridPos": { "h": 6, "w": 6, "x": 18, "y": 24 },
+          "id": 14,
+          "options": { "displayMode": "basic", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "$datasource" }, "editorMode": "code", "expr": "max(etcd_debugging_mvcc_db_total_size_in_bytes / etcd_server_quota_backend_bytes) * 100", "legendFormat": "Highest Utilized Database", "instant": true, "range": false, "refId": "A" }
+          ],
+          "title": "Max etcd Quota Utilization (%)",
+          "type": "bargauge"
+        }
+      ],
+      "refresh": "1m",
+      "schemaVersion": 39,
+      "tags": [
+        "caas",
+        "kpi",
+        "fleet",
+        "overview"
+      ],
+      "templating": {
+        "list": [
+          {
+            "hide": 0,
+            "includeAll": false,
+            "multi": false,
+            "name": "datasource",
+            "query": "prometheus",
+            "refresh": 1,
+            "type": "datasource"
+          }
+        ]
+      },
+      "time": {
+        "from": "now-7d",
+        "to": "now"
+      },
+      "timezone": "browser",
+      "title": "CaaS KPIs: Fleet Overview",
+      "uid": "fleet-overview-caas-kpis",
+      "version": 1
+    }
+    {% endraw %}

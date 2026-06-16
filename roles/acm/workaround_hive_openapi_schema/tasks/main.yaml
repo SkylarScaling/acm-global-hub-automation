@@ -4,8 +4,19 @@
 # ocm-proxyserver. The kube-apiserver aggregates this broken schema, causing
 # Hive's resource.Helper initialisation to fatal on any affected controller.
 #
-# The hive-operator itself has the same crash and cannot reconcile HiveConfig
-# changes, so the deployment must be patched directly.
+# On clusters where hive was already bootstrapped before the bug manifested
+# (e.g. the Global Hub), hive-controllers exists but crashes — the fix is to
+# patch its --disabled-controllers list directly.
+#
+# On freshly-provisioned clusters (e.g. Regional Hubs), hive-operator ALSO hits
+# the broken schema and cannot create the hive namespace or hive-controllers at
+# all. The fix there is to temporarily clear the broken APIServices and restart
+# kube-apiserver so hive-operator can complete its initial bootstrap, then apply
+# the patch before restoring MCE.
+#
+# All waits use oc shell commands — kubernetes.core.k8s_info has been observed
+# to silently return empty results against spoke cluster kubeconfigs while oc
+# connects successfully.
 #
 # This role is a no-op outside the affected version range and is idempotent
 # if the workaround has already been applied.
@@ -55,30 +66,246 @@
   when: _hive_workaround_required
   block:
 
-    - name: Get current hive-controllers deployment
-      kubernetes.core.k8s_info:
-        kubeconfig: "{{ target_kubeconfig }}"
-        api_version: apps/v1
-        kind: Deployment
-        name: hive-controllers
-        namespace: hive
-      register: _hive_deployment
+    # --------------------------------------------------------------------------
+    # STEP 3a — Bootstrap hive if hive-operator failed to create it
+    #
+    # On fresh MCE 2.11.x installs, hive-operator hits the broken OpenAPI schema
+    # via resource.Helper before it can create the hive namespace or the
+    # hive-controllers deployment. The fix: temporarily clear all ocm-proxyserver
+    # APIServices and restart kube-apiserver so it rebuilds its schema cache
+    # without the broken UserPermission $ref. hive-operator can then bootstrap
+    # hive successfully. The patch is applied before MCE is restored so that
+    # hive-operator cannot revert it (hive-operator will fail to reconcile once
+    # the broken schema is back, which is what locks the patch in place).
+    # --------------------------------------------------------------------------
+    - name: Check if hive-controllers deployment already exists
+      ansible.builtin.shell: >
+        {{ bin_dir }}/oc get deployment hive-controllers -n hive
+        --kubeconfig {{ target_kubeconfig }}
+        -o jsonpath='{.metadata.name}' 2>/dev/null || true
+      register: _hive_dep_precheck
+      changed_when: false
+
+    - name: Bootstrap hive — hive-operator could not create it due to broken OpenAPI schema
+      when: _hive_dep_precheck.stdout != "hive-controllers"
+      block:
+
+        - name: Save MCE operator replica count before scaling down
+          ansible.builtin.shell: >
+            {{ bin_dir }}/oc get deployment multicluster-engine-operator
+            -n multicluster-engine
+            --kubeconfig {{ target_kubeconfig }}
+            -o jsonpath='{.spec.replicas}'
+          register: _mce_op_replicas
+          changed_when: false
+
+        - name: Save ocm-proxyserver replica count before scaling down
+          ansible.builtin.shell: >
+            {{ bin_dir }}/oc get deployment ocm-proxyserver
+            -n multicluster-engine
+            --kubeconfig {{ target_kubeconfig }}
+            -o jsonpath='{.spec.replicas}'
+          register: _ocm_proxy_replicas
+          changed_when: false
+
+        - name: Scale down MCE operator to prevent APIService recreation
+          ansible.builtin.shell: >
+            {{ bin_dir }}/oc scale deployment multicluster-engine-operator
+            -n multicluster-engine
+            --kubeconfig {{ target_kubeconfig }}
+            --replicas=0
+          changed_when: true
+
+        - name: Scale down ocm-proxyserver
+          ansible.builtin.shell: >
+            {{ bin_dir }}/oc scale deployment ocm-proxyserver
+            -n multicluster-engine
+            --kubeconfig {{ target_kubeconfig }}
+            --replicas=0
+          changed_when: true
+
+        - name: Delete all ocm-proxyserver APIServices to clear the broken schema source
+          ansible.builtin.shell: >
+            {{ bin_dir }}/oc delete apiservice
+            v1.clusterview.open-cluster-management.io
+            v1alpha1.clusterview.open-cluster-management.io
+            v1beta1.proxy.open-cluster-management.io
+            --kubeconfig {{ target_kubeconfig }}
+            --ignore-not-found
+          changed_when: true
+
+        - name: Wait for ocm-proxyserver pods to fully terminate
+          ansible.builtin.shell: >
+            {{ bin_dir }}/oc get pods -n multicluster-engine
+            --kubeconfig {{ target_kubeconfig }}
+            -l app=ocm-proxyserver
+            -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true
+          register: _proxy_pods_check
+          until: _proxy_pods_check.stdout == ""
+          retries: 12
+          delay: 10
+          changed_when: false
+
+        # Deleting the APIServices alone is not enough — kube-apiserver caches the
+        # broken schema in memory even after the backend is gone. A rolling restart
+        # forces it to rebuild its OpenAPI cache from scratch, this time without the
+        # broken clusterview schema.
+        - name: Restart kube-apiserver to flush the cached broken OpenAPI schema
+          ansible.builtin.shell: >
+            {{ bin_dir }}/oc delete pod
+            -n openshift-kube-apiserver
+            -l app=openshift-kube-apiserver
+            --kubeconfig {{ target_kubeconfig }}
+          changed_when: true
+
+        - name: Wait for kube-apiserver to come back
+          ansible.builtin.shell: >
+            {{ bin_dir }}/oc get namespace default
+            --kubeconfig {{ target_kubeconfig }}
+            -o jsonpath='{.metadata.name}' 2>/dev/null || true
+          register: _apiserver_ready
+          until: _apiserver_ready.stdout == "default"
+          retries: 24  # Up to 6 minutes
+          delay: 15
+          changed_when: false
+
+        - name: Bounce hive-operator to trigger a fresh reconcile against the clean schema
+          ansible.builtin.shell: >
+            {{ bin_dir }}/oc rollout restart deployment/hive-operator
+            -n multicluster-engine
+            --kubeconfig {{ target_kubeconfig }}
+          changed_when: true
+
+        - name: Wait for hive namespace to be created by hive-operator
+          ansible.builtin.shell: >
+            {{ bin_dir }}/oc get namespace hive
+            --kubeconfig {{ target_kubeconfig }}
+            -o jsonpath='{.metadata.name}' 2>/dev/null || true
+          register: _hive_ns_bootstrap
+          until: _hive_ns_bootstrap.stdout == "hive"
+          retries: 40  # Up to 20 minutes
+          delay: 30
+          changed_when: false
+
+        - name: Wait for hive-controllers deployment to be created
+          ansible.builtin.shell: >
+            {{ bin_dir }}/oc get deployment hive-controllers -n hive
+            --kubeconfig {{ target_kubeconfig }}
+            -o jsonpath='{.metadata.name}' 2>/dev/null || true
+          register: _hive_dep_bootstrap
+          until: _hive_dep_bootstrap.stdout == "hive-controllers"
+          retries: 40  # Up to 20 minutes
+          delay: 30
+          changed_when: false
+
+        - name: Wait for hive-controllers to become available
+          ansible.builtin.shell: >
+            {{ bin_dir }}/oc get deployment hive-controllers -n hive
+            --kubeconfig {{ target_kubeconfig }}
+            -o jsonpath='{.status.availableReplicas}' 2>/dev/null || true
+          register: _hive_available
+          until: (_hive_available.stdout | default('0') | int) >= 1
+          retries: 20
+          delay: 15
+          changed_when: false
+
+        # Apply the patch now, while MCE is still down and hive-operator is using the
+        # clean schema. Once MCE is restored the broken schema returns, hive-operator
+        # fails to reconcile HiveConfig, and the patch persists.
+        - name: Get current hive-controllers disabled controllers list for bootstrap patch
+          ansible.builtin.shell: >
+            {{ bin_dir }}/oc get deployment hive-controllers -n hive
+            --kubeconfig {{ target_kubeconfig }}
+            -o jsonpath='{.spec.template.spec.containers[0].args[1]}'
+          register: _bootstrap_current_disabled
+          changed_when: false
+
+        - name: Build bootstrap patch value
+          ansible.builtin.set_fact:
+            _bootstrap_patch_value: >-
+              {{ _bootstrap_current_disabled.stdout }},{{ mce_hive_openapi_disabled_controllers | join(',') }}
+
+        - name: Patch hive-controllers to disable affected controllers
+          ansible.builtin.shell: >
+            {{ bin_dir }}/oc patch deployment hive-controllers -n hive
+            --kubeconfig {{ target_kubeconfig }}
+            --type=json
+            -p='[{"op": "replace", "path": "/spec/template/spec/containers/0/args/1", "value": "{{ _bootstrap_patch_value }}"}]'
+          changed_when: true
+
+        - name: Wait for patched hive-controllers rollout to complete
+          ansible.builtin.shell: >
+            {{ bin_dir }}/oc rollout status deployment/hive-controllers -n hive
+            --kubeconfig {{ target_kubeconfig }}
+            --timeout=8m
+          changed_when: false
+
+        - name: Restore MCE operator to original replica count
+          ansible.builtin.shell: >
+            {{ bin_dir }}/oc scale deployment multicluster-engine-operator
+            -n multicluster-engine
+            --kubeconfig {{ target_kubeconfig }}
+            --replicas={{ _mce_op_replicas.stdout }}
+          changed_when: true
+
+        - name: Restore ocm-proxyserver to original replica count
+          ansible.builtin.shell: >
+            {{ bin_dir }}/oc scale deployment ocm-proxyserver
+            -n multicluster-engine
+            --kubeconfig {{ target_kubeconfig }}
+            --replicas={{ _ocm_proxy_replicas.stdout }}
+          changed_when: true
+
+        - name: Report bootstrap workaround complete
+          ansible.builtin.debug:
+            msg: >-
+              ✅ Hive bootstrapped and workaround applied.
+              Disabled controllers: {{ _bootstrap_patch_value }}
+              MCE components restored — broken schema will return and lock the patch in place.
+
+    # --------------------------------------------------------------------------
+    # STEP 3b — Verify and apply the patch to an existing hive-controllers
+    #
+    # Handles both the normal case (hive exists, hive-controllers is crashing)
+    # and the idempotent re-run after bootstrap (patch was already applied above).
+    # --------------------------------------------------------------------------
+    - name: Wait for hive-controllers deployment
+      ansible.builtin.shell: >
+        {{ bin_dir }}/oc get deployment hive-controllers -n hive
+        --kubeconfig {{ target_kubeconfig }}
+        -o jsonpath='{.metadata.name}' 2>/dev/null || true
+      register: _hive_dep_check
+      until: _hive_dep_check.stdout == "hive-controllers"
+      retries: 40  # Up to 20 minutes (hive-operator reconciliation lags ArgoCD sync)
+      delay: 30
+      changed_when: false
+
+    - name: Get hive-controllers deployment spec
+      ansible.builtin.command: >
+        {{ bin_dir }}/oc get deployment hive-controllers -n hive
+        --kubeconfig {{ target_kubeconfig }}
+        -o json
+      register: _hive_deployment_raw
+      changed_when: false
+
+    - name: Parse hive-controllers deployment spec
+      ansible.builtin.set_fact:
+        _hive_deployment: "{{ _hive_deployment_raw.stdout | from_json }}"
 
     - name: Verify --disabled-controllers flag is present in deployment args
       ansible.builtin.assert:
         that:
-          - _hive_deployment.resources | length > 0
-          - "'--disabled-controllers' in _hive_deployment.resources[0].spec.template.spec.containers[0].args"
+          - "'--disabled-controllers' in _hive_deployment.spec.template.spec.containers[0].args"
         fail_msg: >-
-          hive-controllers deployment does not contain --disabled-controllers in its args.
+          hive-controllers does not contain --disabled-controllers in its args.
           The Hive deployment structure may have changed. Review ISSUES.md #10 and
           apply the workaround manually.
 
     - name: Parse current args and locate --disabled-controllers value
       ansible.builtin.set_fact:
-        _hive_container_name: "{{ _hive_deployment.resources[0].spec.template.spec.containers[0].name }}"
-        _hive_args: "{{ _hive_deployment.resources[0].spec.template.spec.containers[0].args }}"
-        _disabled_idx: "{{ _hive_deployment.resources[0].spec.template.spec.containers[0].args.index('--disabled-controllers') }}"
+        _hive_container_name: "{{ _hive_deployment.spec.template.spec.containers[0].name }}"
+        _hive_args: "{{ _hive_deployment.spec.template.spec.containers[0].args }}"
+        _disabled_idx: "{{ _hive_deployment.spec.template.spec.containers[0].args.index('--disabled-controllers') }}"
 
     - name: Extract current disabled controllers list
       ansible.builtin.set_fact:
@@ -128,20 +355,11 @@
     # The patch triggers a rolling restart. The new pod must wait up to 120 s for
     # the old pod's leader lease to expire before it can start controllers.
     - name: Wait for hive-controllers rollout to complete (allow 8 min for lease handover)
-      kubernetes.core.k8s_info:
-        kubeconfig: "{{ target_kubeconfig }}"
-        api_version: apps/v1
-        kind: Deployment
-        name: hive-controllers
-        namespace: hive
-      register: _hive_status
-      until:
-        - _hive_status.resources | length > 0
-        - _hive_status.resources[0].status.observedGeneration == _hive_status.resources[0].metadata.generation
-        - (_hive_status.resources[0].status.readyReplicas | default(0)) >= 1
-        - (_hive_status.resources[0].status.updatedReplicas | default(0)) >= 1
-      retries: 32
-      delay: 15
+      ansible.builtin.shell: >
+        {{ bin_dir }}/oc rollout status deployment/hive-controllers -n hive
+        --kubeconfig {{ target_kubeconfig }}
+        --timeout=8m
+      changed_when: false
       when: not _workaround_already_applied
 
     - name: Confirm hive-controllers is healthy with workaround applied

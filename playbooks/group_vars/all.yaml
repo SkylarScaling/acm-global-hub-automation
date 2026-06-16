@@ -6,4 +6,8 @@ install_dir: "{{ working_dir }}/acm-global-hub/install"
 
 # Optional features (override in inventory to enable)
 enable_uwm: false
+
+# Standalone playbook extra-vars (pass via -e when running acm/ or argo/ playbooks directly)
+# cluster_name: ""       # Name of the target cluster (maps to install_dir/<name>/auth/kubeconfig)
+# spokes_clusterset: ""  # ClusterSet to target for ACM policy placement
 ...

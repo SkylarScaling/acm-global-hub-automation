@@ -1,12 +1,14 @@
 ---
-- name: Install ArgoCD via ACM Policy
+- name: Deploy Monitoring Policy to Global Hub
   hosts: localhost
   vars_files:
     - ../group_vars/all.yaml
   connection: local
   gather_facts: false
-  environment:
-    KUBECONFIG: "{{ install_dir }}/{{ ocp_cluster.name }}/auth/kubeconfig"
 
-  roles:
-    - role: acm/policy_monitor_managed_hubs
+  tasks:
+    - name: Deploy ACM Policy - Monitor Managed Hubs
+      ansible.builtin.include_role:
+        name: acm/policy_monitor_managed_hubs
+      vars:
+        target_kubeconfig: "{{ install_dir }}/{{ cluster_name }}/auth/kubeconfig"

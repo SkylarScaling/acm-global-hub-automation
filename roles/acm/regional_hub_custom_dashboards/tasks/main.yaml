@@ -1,0 +1,16 @@
+---
+- name: Deploy Custom Dashboards to Regional Hub
+  kubernetes.core.k8s:
+    kubeconfig: "{{ target_kubeconfig }}"
+    state: present
+    template: "{{ item }}"
+  loop:
+    - kpi-dashboard.yaml.j2
+    - caas-kpi-dashboard.yaml.j2
+    - cluster-uptime-dashboard.yaml.j2
+    - ocp-utilization-kpi-dashboard.yaml.j2
+    - sn-ocp-utilization-kpi-dashboard.yaml.j2
+    - lab-ocp-utilization-kpi-dashboard.yaml.j2
+    - ocp-avail-n-health-kpi-dashboard.yaml.j2
+    - sn-ocp-avail-n-health-kpi-dashboard.yaml.j2
+    - ocp-fleet-kpi-dashboard.yaml.j2

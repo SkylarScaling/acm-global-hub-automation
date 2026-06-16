@@ -5,11 +5,28 @@
     - ../group_vars/all.yaml
   connection: local
   gather_facts: false
-  environment:
-    KUBECONFIG: "{{ install_dir }}/{{ ocp_cluster.name }}/auth/kubeconfig"
 
-  roles:
-    - role: argo/apps_install_acm
-    - role: argo/apps_install_odf
-    - role: argo/apps_install_mco
-#    - role: argo/apps_install_global_hub
+  tasks:
+    - name: Install ArgoCD App - ACM
+      ansible.builtin.include_role:
+        name: argo/apps_install_acm
+      vars:
+        target_kubeconfig: "{{ install_dir }}/{{ cluster_name }}/auth/kubeconfig"
+
+    - name: Install ArgoCD App - ODF
+      ansible.builtin.include_role:
+        name: argo/apps_install_odf
+      vars:
+        target_kubeconfig: "{{ install_dir }}/{{ cluster_name }}/auth/kubeconfig"
+
+    - name: Install ArgoCD App - MCO
+      ansible.builtin.include_role:
+        name: argo/apps_install_mco
+      vars:
+        target_kubeconfig: "{{ install_dir }}/{{ cluster_name }}/auth/kubeconfig"
+
+#    - name: Install ArgoCD App - Global Hub
+#      ansible.builtin.include_role:
+#        name: argo/apps_install_global_hub
+#      vars:
+#        target_kubeconfig: "{{ install_dir }}/{{ cluster_name }}/auth/kubeconfig"

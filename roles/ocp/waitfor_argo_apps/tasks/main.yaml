@@ -1,24 +1,29 @@
 ---
-- name: Discover all currently deployed Argo CD Applications
+- name: Wait for at least one Argo CD Application to appear
   ansible.builtin.command: >
     {{ bin_dir }}/oc get applications.argoproj.io
     -n openshift-gitops
     --kubeconfig {{ target_kubeconfig }}
     -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'
   register: discovered_argo_apps
+  until: discovered_argo_apps.stdout_lines | select('ne', '') | list | length > 0
+  retries: 20
+  delay: 30
   changed_when: false
 
 - name: Wait for all Argo CD Applications to be Healthy and Synced
   ansible.builtin.shell: >
-    {{ bin_dir }}/oc get application.argoproj.io {{ item }}
+    {{ bin_dir }}/oc get applications.argoproj.io
     -n openshift-gitops
     --kubeconfig {{ target_kubeconfig }}
-    -o jsonpath='health={.status.health.status} sync={.status.sync.status}' 2>/dev/null || true
-  register: app_status
-  until: app_status.stdout == "health=Healthy sync=Synced"
-  retries: 40  # Wait up to 20 minutes per app (40 * 30 seconds)
+    -o jsonpath='{range .items[*]}{.metadata.name}={.status.health.status}/{.status.sync.status}{"\n"}{end}'
+    2>/dev/null || true
+  register: all_app_statuses
+  until: >-
+    all_app_statuses.stdout_lines
+    | select('ne', '')
+    | reject('search', '=Healthy/Synced$')
+    | list | length == 0
+  retries: 40  # Wait up to 20 minutes total (40 * 30 seconds)
   delay: 30
   changed_when: false
-  loop: "{{ discovered_argo_apps.stdout_lines | select('ne', '') | list }}"
-  loop_control:
-    label: "{{ item }}"

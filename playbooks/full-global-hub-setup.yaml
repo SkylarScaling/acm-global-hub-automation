@@ -1,5 +1,61 @@
 ---
 # ==============================================================================
+# PRE-FLIGHT: Stale Install Directory Check
+# ==============================================================================
+# Runs automatically on a full fresh run (no --tags filter).
+# Skipped automatically when doing a targeted re-run (e.g. --tags tier2), since
+# existing Tier 1 directories are expected in that case.
+# Can also be bypassed explicitly with --skip-tags preflight.
+- name: Pre-flight - Stale Install Directory Check
+  hosts: all
+  connection: local
+  gather_facts: false
+  any_errors_fatal: true
+  tags: ['preflight']
+  tasks:
+    - name: Check if an install directory exists from a previous run
+      ansible.builtin.stat:
+        path: "{{ install_dir }}/{{ ocp_cluster.name }}"
+      register: _dir_check
+
+    - name: Validate cluster fingerprint if install directory exists
+      when: _dir_check.stat.exists
+      block:
+        - name: Read cluster fingerprint
+          ansible.builtin.slurp:
+            src: "{{ install_dir }}/{{ ocp_cluster.name }}/.cluster-fingerprint"
+          register: _fingerprint_raw
+          failed_when: false
+
+        - name: Parse cluster fingerprint
+          ansible.builtin.set_fact:
+            _fp: "{{ _fingerprint_raw.content | b64decode | from_yaml }}"
+          when: _fingerprint_raw.content is defined
+
+        - name: Fail if fingerprint indicates a different environment
+          ansible.builtin.fail:
+            msg: |-
+              Install directory '{{ install_dir }}/{{ ocp_cluster.name }}/' exists
+              but was created for a different environment than the current inventory.
+
+                Field          Stored                         Current (this run)
+                -----------    ----------------------------   ----------------------------
+                AWS Account    {{ _fp.aws_account_id }}       {{ aws.account_id }}
+                AWS Region     {{ _fp.aws_region }}            {{ aws.aws_region }}
+                Base Domain    {{ _fp.base_domain }}           {{ base_domain }}
+
+              Remove the directory before re-provisioning from scratch:
+                rm -rf {{ install_dir }}/{{ ocp_cluster.name }}
+
+              To bypass this check for targeted re-runs: --skip-tags preflight
+          when:
+            - _fp is defined
+            - >-
+              (_fp.aws_account_id | string != aws.account_id | string) or
+              (_fp.aws_region != aws.aws_region) or
+              (_fp.base_domain != base_domain)
+
+# ==============================================================================
 # TIER 1: Provision Global Hub (IPI)
 # ==============================================================================
 - name: Tier 1 - Provision Global Hub
@@ -109,14 +165,6 @@
           vars:
             target_kubeconfig: "{{ global_hub_kubeconfig }}"
             spokes_clusterset: "{{ ocp_cluster.spokes_clusterset }}"
-
-    - name: Deploy Custom Executive KPI Dashboards
-      block:
-        - ansible.builtin.include_role:
-            name: acm/global_hub_custom_dashboards
-          vars:
-            # We apply this directly to the Global Hub so it appears in the central Grafana
-            target_kubeconfig: "{{ global_hub_kubeconfig }}"
 
 #    - name: Deploy ACM Policies to monitor Regional Hubs
 #      ansible.builtin.include_role:
@@ -280,6 +328,13 @@
         spokes_clusterset: "{{ ocp_cluster.spokes_clusterset }}"
         target_kubeconfig: "{{ regional_hub_kubeconfig }}"
       when: enable_uwm | default(false) | bool
+
+    - name: Deploy Custom Executive KPI Dashboards
+      block:
+        - ansible.builtin.include_role:
+            name: acm/regional_hub_custom_dashboards
+          vars:
+            target_kubeconfig: "{{ regional_hub_kubeconfig }}"
 
     - name: Configure Managed Cluster Addons
       block:
