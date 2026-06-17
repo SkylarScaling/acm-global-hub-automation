@@ -116,35 +116,261 @@ These are separate from the Ansible inventory group names, which only control wh
 | `gitops_version` | `managed_clusters` hosts | GitOps operator version to enforce via ACM policy (`1.18` or `1.19`) |
 | `install_config` | all hosts | Node instance types and replica counts |
 
-### Shared `all.vars`
+### Example inventories
+
+Kubeconfigs are written to `{{ tmp_dir }}/acm-global-hub/install/{{ ocp_cluster.name }}/auth/kubeconfig`.
+
+#### Three-tier Global Hub (`full-global-hub-ipi-setup.yaml`)
 
 ```yaml
 all:
   vars:
-    home_dir: < /home/youruser >
+    home_dir: /home/<your_user>
     tmp_dir: "{{ home_dir }}/tmp"
     openshift_version: "4.20"
-    ocp_patch_version: "18"
-    base_domain: <base_domain>
+    ocp_patch_version: "22"
+    acm_git_repo_revision: "main"
+    odf_git_repo_revision: "main"
+    base_domain: <your_base_domain>
     ssh_key: "{{ lookup('file', '~/.ssh/id_ed25519.pub') }}"
     pull_secret: "{{ lookup('file', '~/pull-secret.json') | from_json }}"
     aws:
-      account_id: <account_id>
-      aws_access_key_id: <key_id>
-      aws_secret_access_key: <secret>
-      aws_region: <aws_region>
+      account_id: <your_aws_account_id>
+      aws_access_key_id: <your_aws_access_key_id>
+      aws_secret_access_key: <your_aws_secret_access_key>
+      aws_region: us-east-2
+      desired_eip_quota: 5
     smtp:
       host: "smtp.gmail.com"
       port: "587"
-      from_address: "<email>"
+      from_address: "<your_email>"
       require_tls: "true"
-      username: "<email>"
-      app_password: "<app_password>"
-      default_to: "<default_recipient>"
-      esp_to: "<esp_recipient>"
+      username: "<your_email>"
+      app_password: "<your_smtp_app_password>"
+      default_to: "<default_alert_recipient>"
+      esp_to: "<esp_alert_recipient>"
+  children:
+    hub_cluster:
+      hosts:
+        global-hub:
+          ansible_connection: local
+          ocp_cluster:
+            name: "global-hub"
+            spokes_clusterset: regional-hubs
+          install_config:
+            cluster_name: "{{ ocp_cluster.name }}"
+            control_plane:
+              instance_type: "m6a.2xlarge"
+              zones:
+                - us-east-2a
+            workers:
+              instance_type: "m6a.xlarge"
+              replicas: "3"
+              zones:
+                - us-east-2a
+            infra:
+              instance_type: "m6a.4xlarge"
+              replicas: "3"
+              zones:
+                - us-east-2a
+            storage:
+              instance_type: "m6a.4xlarge"
+              replicas: "3"
+              zones:
+                - us-east-2a
+    regional_hubs:
+      hosts:
+        regional-hub-1:
+          ansible_connection: local
+          ocp_cluster:
+            name: "regional-hub-1"
+            parent_clusterset: regional-hubs
+            spokes_clusterset: managed-clusters
+          install_config:
+            cluster_name: "{{ ocp_cluster.name }}"
+            control_plane:
+              instance_type: "m6a.2xlarge"
+              zones:
+                - us-east-2a
+            workers:
+              instance_type: "m6a.xlarge"
+              replicas: "3"
+              zones:
+                - us-east-2a
+            infra:
+              instance_type: "m6a.4xlarge"
+              replicas: "3"
+              zones:
+                - us-east-2a
+            storage:
+              instance_type: "m6a.4xlarge"
+              replicas: "3"
+              zones:
+                - us-east-2a
+#        regional-hub-2:
+#          ansible_connection: local
+#          ocp_cluster:
+#            name: "regional-hub-2"
+#            parent_clusterset: regional-hubs
+#            spokes_clusterset: managed-clusters
+#          install_config:
+#            cluster_name: "{{ ocp_cluster.name }}"
+#            control_plane:
+#              instance_type: "m6a.2xlarge"
+#              zones:
+#                - us-east-2a
+#            workers:
+#              instance_type: "m6a.xlarge"
+#              replicas: "3"
+#              zones:
+#                - us-east-2a
+#            infra:
+#              instance_type: "m6a.4xlarge"
+#              replicas: "3"
+#              zones:
+#                - us-east-2a
+#            storage:
+#              instance_type: "m6a.4xlarge"
+#              replicas: "3"
+#              zones:
+#                - us-east-2a
+    managed_clusters:
+      hosts:
+        managed-cluster-1:
+          ansible_connection: local
+          regional_hub: regional-hub-1
+          gitops_version: "1.18"
+          ocp_cluster:
+            name: "managed-cluster-1"
+            parent_clusterset: managed-clusters
+          install_config:
+            cluster_name: "{{ ocp_cluster.name }}"
+            control_plane:
+              instance_type: "m6a.xlarge"
+              zones:
+                - us-east-2a
+            workers:
+              instance_type: "m6a.xlarge"
+              replicas: "3"
+              zones:
+                - us-east-2a
+#        managed-cluster-2:
+#          ansible_connection: local
+#          regional_hub: regional-hub-2
+#          gitops_version: "1.18"
+#          ocp_cluster:
+#            name: "managed-cluster-2"
+#            parent_clusterset: managed-clusters
+#          install_config:
+#            cluster_name: "{{ ocp_cluster.name }}"
+#            control_plane:
+#              instance_type: "m6a.xlarge"
+#              zones:
+#                - us-east-2a
+#            workers:
+#              instance_type: "m6a.xlarge"
+#              replicas: "3"
+#              zones:
+#                - us-east-2a
 ```
 
-Kubeconfigs are written to `{{ tmp_dir }}/acm-global-hub/install/{{ ocp_cluster.name }}/auth/kubeconfig`.
+#### Two-tier ACM Hub (`hub-spoke-ipi-setup.yaml`)
+
+```yaml
+all:
+  vars:
+    home_dir: /home/<your_user>
+    tmp_dir: "{{ home_dir }}/tmp"
+    openshift_version: "4.20"
+    ocp_patch_version: "22"
+    acm_git_repo_revision: "main"
+    odf_git_repo_revision: "main"
+    base_domain: <your_base_domain>
+    ssh_key: "{{ lookup('file', '~/.ssh/id_ed25519.pub') }}"
+    pull_secret: "{{ lookup('file', '~/pull-secret.json') | from_json }}"
+    aws:
+      account_id: <your_aws_account_id>
+      aws_access_key_id: <your_aws_access_key_id>
+      aws_secret_access_key: <your_aws_secret_access_key>
+      aws_region: us-east-2
+      desired_eip_quota: 5
+    smtp:
+      host: "smtp.gmail.com"
+      port: "587"
+      from_address: "<your_email>"
+      require_tls: "true"
+      username: "<your_email>"
+      app_password: "<your_smtp_app_password>"
+      default_to: "<default_alert_recipient>"
+      esp_to: "<esp_alert_recipient>"
+  children:
+    hub_cluster:
+      hosts:
+        acm-hub:
+          ansible_connection: local
+          ocp_cluster:
+            name: "acm-hub"
+            spokes_clusterset: managed-clusters
+          install_config:
+            cluster_name: "{{ ocp_cluster.name }}"
+            control_plane:
+              instance_type: "m6a.2xlarge"
+              zones:
+                - us-east-2a
+            workers:
+              instance_type: "m6a.xlarge"
+              replicas: "3"
+              zones:
+                - us-east-2a
+            infra:
+              instance_type: "m6a.4xlarge"
+              replicas: "3"
+              zones:
+                - us-east-2a
+            storage:
+              instance_type: "m6a.4xlarge"
+              replicas: "3"
+              zones:
+                - us-east-2a
+    managed_clusters:
+      hosts:
+        managed-cluster-1:
+          ansible_connection: local
+          regional_hub: regional-hub-1
+          gitops_version: "1.18"
+          ocp_cluster:
+            name: "managed-cluster-1"
+            parent_clusterset: managed-clusters
+          install_config:
+            cluster_name: "{{ ocp_cluster.name }}"
+            control_plane:
+              instance_type: "m6a.xlarge"
+              zones:
+                - us-east-2a
+            workers:
+              instance_type: "m6a.xlarge"
+              replicas: "3"
+              zones:
+                - us-east-2a
+#        managed-cluster-2:
+#          ansible_connection: local
+#          regional_hub: regional-hub-2
+#          gitops_version: "1.18"
+#          ocp_cluster:
+#            name: "managed-cluster-2"
+#            parent_clusterset: managed-clusters
+#          install_config:
+#            cluster_name: "{{ ocp_cluster.name }}"
+#            control_plane:
+#              instance_type: "m6a.xlarge"
+#              zones:
+#                - us-east-2a
+#            workers:
+#              instance_type: "m6a.xlarge"
+#              replicas: "3"
+#              zones:
+#                - us-east-2a
+```
 
 ### Reducing EIP usage
 
