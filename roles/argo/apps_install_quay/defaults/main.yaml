@@ -1,0 +1,14 @@
+---
+# ArgoCD Application Configuration
+quay_argocd_app_name: "quay-registry"
+quay_argocd_namespace: "openshift-gitops"
+quay_argocd_project: "default"
+quay_argocd_sync_policy: "Automatic"
+
+# Git Repository Configuration
+quay_git_repo_url: "https://github.com/SkylarScaling/gitops-install-quay.git"
+quay_git_repo_path: "quay"
+quay_git_repo_revision: "main"
+
+# Target Namespace for Quay deployment
+quay_target_namespace: "local-quay"

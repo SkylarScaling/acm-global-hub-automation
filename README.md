@@ -54,7 +54,9 @@ These must exist on the control node before running any playbook:
 | `~/.ssh/id_ed25519.pub` | SSH public key injected into cluster nodes |
 
 ### AWS
-The AWS account needs permissions for EC2, Route53, S3, IAM, and ELB. The automation will request an EIP quota increase automatically if the current quota is below the threshold.
+The AWS account needs permissions for EC2, Route53, S3, IAM, and ELB. The automation will request an EIP quota increase automatically if the current quota is below `aws.desired_eip_quota` (default: 15).
+
+By default each cluster spans all AZs in the region (3 in most AWS regions), creating one NAT gateway per AZ and consuming **3 EIPs per cluster**. For test environments with limited EIP quota, see [Reducing EIP usage](#reducing-eip-usage) below.
 
 ## Provisioning Strategies
 
@@ -144,6 +146,49 @@ all:
 
 Kubeconfigs are written to `{{ tmp_dir }}/acm-global-hub/install/{{ ocp_cluster.name }}/auth/kubeconfig`.
 
+### Reducing EIP usage
+
+By default the OpenShift installer spreads a cluster across all AZs in the region, creating one NAT gateway (and one EIP) per AZ — typically **3 EIPs per cluster**. With an AWS default EIP quota of 5, this only leaves room for one cluster before hitting the limit.
+
+Pinning a cluster to a single AZ reduces it to **1 NAT gateway = 1 EIP**. This is done by adding a `zones` list to any node group in `install_config`:
+
+```yaml
+install_config:
+  control_plane:
+    instance_type: "m6a.xlarge"
+    zones:
+      - us-east-2a
+  workers:
+    instance_type: "m6a.xlarge"
+    replicas: "3"
+    zones:
+      - us-east-2a
+  # infra and storage pools (if present) also accept zones:
+  infra:
+    instance_type: "m6a.4xlarge"
+    replicas: "3"
+    zones:
+      - us-east-2a
+  storage:
+    instance_type: "m6a.4xlarge"
+    replicas: "3"
+    zones:
+      - us-east-2a
+```
+
+`zones` is optional on each pool independently. Omitting it leaves that pool spread across all AZs.
+
+**EIP budget with single-AZ clusters (us-east-2, default quota of 5):**
+
+| Clusters | AZ config | EIPs used |
+|---|---|---|
+| 1 hub | 3-AZ (default) | 3 |
+| 1 hub + 1 spoke | both 3-AZ | 6 — **exceeds default quota** |
+| 1 hub + 1 spoke | both single-AZ | 2 — fits within default quota |
+| 1 hub + 3 spokes | both single-AZ | 4 — fits within default quota |
+
+The trade-off is loss of AZ redundancy. For production hubs, keeping the default 3-AZ spread is recommended. For lab/test spoke clusters, single-AZ is a practical way to run multiple clusters without requesting a quota increase.
+
 ## Day 2 Configuration
 
 After provisioning, Day 2 config is applied via ArgoCD Applications pointing to external GitOps repos. The default repo URLs in role defaults point to `SkylarScaling/gitops-install-*`. Override these in your inventory or role vars for your own environment:
@@ -155,6 +200,7 @@ After provisioning, Day 2 config is applied via ArgoCD Applications pointing to 
 | MCO | `argo/apps_install_mco` | `gitops-install-mco` |
 | Global Hub | `argo/apps_install_global_hub` | `gitops-install-global-hub` |
 | COO | `argo/apps_install_coo` | `gitops-install-coo` |
+| Quay | `argo/apps_install_quay` | `gitops-install-quay` |
 
 ## Optional Features
 

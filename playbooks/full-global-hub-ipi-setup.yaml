@@ -313,6 +313,7 @@
             - argo/apps_install_acm
             - argo/apps_install_odf
             - argo/apps_install_mco
+            - argo/apps_install_quay
           vars:
             target_kubeconfig: "{{ regional_hub_kubeconfig }}"
 

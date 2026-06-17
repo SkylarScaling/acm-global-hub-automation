@@ -16,6 +16,12 @@ spec:
         iops: 3000
         size: 120
         type: gp3
+{% if install_config.workers.zones is defined %}
+      zones:
+{% for zone in install_config.workers.zones %}
+      - {{ zone }}
+{% endfor %}
+{% endif %}
   replicas: {{ install_config.workers.replicas }}
 
 {% if install_config.infra is defined %}
@@ -42,6 +48,12 @@ spec:
         iops: 3000
         size: 120
         type: gp3
+{% if install_config.infra.zones is defined %}
+      zones:
+{% for zone in install_config.infra.zones %}
+      - {{ zone }}
+{% endfor %}
+{% endif %}
   replicas: {{ install_config.infra.replicas }}
 {% endif %}
 
@@ -72,5 +84,11 @@ spec:
         iops: 3000
         size: 120
         type: gp3
+{% if install_config.storage.zones is defined %}
+      zones:
+{% for zone in install_config.storage.zones %}
+      - {{ zone }}
+{% endfor %}
+{% endif %}
   replicas: {{ install_config.storage.replicas }}
 {% endif %}

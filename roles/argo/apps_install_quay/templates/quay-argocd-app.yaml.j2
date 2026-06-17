@@ -1,0 +1,36 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ quay_argocd_app_name }}
+  namespace: {{ quay_argocd_namespace }}
+spec:
+  project: {{ quay_argocd_project }}
+  source:
+    repoURL: {{ quay_git_repo_url }}
+    targetRevision: '{{ quay_git_repo_revision }}'
+    path: {{ quay_git_repo_path }}
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ quay_target_namespace }}
+  syncPolicy:
+{% if quay_argocd_sync_policy == "Automatic" %}
+    automated:
+      prune: true
+      selfHeal: true
+{% endif %}
+    syncOptions:
+      - CreateNamespace=true
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 3m
+  ignoreDifferences:
+    - group: quay.redhat.com
+      kind: QuayRegistry
+      jsonPointers:
+        - /spec/components

@@ -1,3 +1,3 @@
 ---
 aws_region: "{{ aws.aws_region }}"
-desired_eip_quota: 15
+desired_eip_quota: "{{ aws.desired_eip_quota | default(15) }}"
